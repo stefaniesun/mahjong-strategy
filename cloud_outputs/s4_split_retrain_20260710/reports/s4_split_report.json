@@ -1,0 +1,114 @@
+{
+  "belief_evaluation": {
+    "test": {
+      "learned": {
+        "discard_danger_brier": 0.019234889366070398,
+        "discard_danger_count": 202242,
+        "discard_danger_ece": 0.002209692473094963,
+        "opponent_tenpai_brier": 0.12928747037848545,
+        "opponent_tenpai_count": 22209,
+        "opponent_tenpai_ece": 0.039084939687058715,
+        "samples": 7403,
+        "tile_brier": 0.25286931165675897,
+        "tile_count": 180927,
+        "tile_log_loss": 0.989042636976213
+      },
+      "prior": {
+        "discard_danger_brier": 0.020015624845482145,
+        "discard_danger_count": 202242,
+        "discard_danger_ece": 0.020015624845482145,
+        "opponent_tenpai_brier": 0.2064478364626953,
+        "opponent_tenpai_count": 22209,
+        "opponent_tenpai_ece": 0.2064478364626953,
+        "samples": 7403,
+        "tile_brier": 0.2764856263312943,
+        "tile_count": 180927,
+        "tile_log_loss": 1.0739544652199575
+      },
+      "tile_log_loss_relative_reduction": 0.07906464472528052
+    },
+    "val": {
+      "learned": {
+        "discard_danger_brier": 0.018314582323400184,
+        "discard_danger_count": 195213,
+        "discard_danger_ece": 0.001720236273190014,
+        "opponent_tenpai_brier": 0.13948467016186758,
+        "opponent_tenpai_count": 21555,
+        "opponent_tenpai_ece": 0.03375296373195935,
+        "samples": 7185,
+        "tile_brier": 0.2542714007252247,
+        "tile_count": 176990,
+        "tile_log_loss": 0.9819370160812171
+      },
+      "prior": {
+        "discard_danger_brier": 0.019204663623836528,
+        "discard_danger_count": 195213,
+        "discard_danger_ece": 0.019204663623836528,
+        "opponent_tenpai_brier": 0.22885641382509858,
+        "opponent_tenpai_count": 21555,
+        "opponent_tenpai_ece": 0.22885641382509858,
+        "samples": 7185,
+        "tile_brier": 0.27918261840535885,
+        "tile_count": 176990,
+        "tile_log_loss": 1.073355619014284
+      },
+      "tile_log_loss_relative_reduction": 0.08517084302127298
+    }
+  },
+  "belief_train_metrics": {
+    "batches": 1011.0,
+    "device": "cuda",
+    "discard_danger_loss": 0.09173369637582705,
+    "loss": 1.567043486617793,
+    "opponent_tenpai_loss": 0.4466420746934402,
+    "samples": 129311.0,
+    "tile_location_loss": 1.028667713426105
+  },
+  "checkpoints": {
+    "belief": "/root/sichuan-mahjong-s4-cuda-v2-20260710/cloud_outputs/s4_split_retrain_20260710/checkpoints/belief_s4_split.pt",
+    "policy": "/root/sichuan-mahjong-s4-cuda-v2-20260710/cloud_outputs/s4_split_retrain_20260710/checkpoints/policy_s4_split.pt"
+  },
+  "execution": {
+    "degradation_profile": "light_noise",
+    "device": "cuda"
+  },
+  "policy_evaluation": {
+    "test": {
+      "illegal_argmax_count": 0,
+      "illegal_probability_mass": 0.0,
+      "samples": 7403,
+      "top1_accuracy": 0.8316898941993713
+    },
+    "val": {
+      "illegal_argmax_count": 0,
+      "illegal_probability_mass": 0.0,
+      "samples": 7185,
+      "top1_accuracy": 0.8320111036300659
+    }
+  },
+  "policy_train_metrics": {
+    "batches": 1011.0,
+    "device": "cuda",
+    "loss": 0.49751547586198613,
+    "samples": 129311.0,
+    "top1_accuracy": 0.8136289624384909
+  },
+  "split": {
+    "games": {
+      "test": 50,
+      "train": 900,
+      "val": 50
+    },
+    "ratios": [
+      0.9,
+      0.05,
+      0.05
+    ],
+    "records": {
+      "test": 7403,
+      "train": 129311,
+      "val": 7185
+    },
+    "seed": 20260710
+  }
+}

@@ -1,0 +1,42 @@
+{
+  "verified_files": [
+    {
+      "path": "checkpoints/belief_s4.pt",
+      "sha256": "7a04c35391616a4dc45c40a0a8a0354d76eaa9dd4a19028771979d0d182a890c",
+      "bytes": 505486
+    },
+    {
+      "path": "checkpoints/policy_s4.pt",
+      "sha256": "0f4205ecfe47373fc359e7814d38b1995619058ecf49a01c8942be334444905a",
+      "bytes": 735122
+    },
+    {
+      "path": "reports/s4_training_report.json",
+      "sha256": "2bc9394dd8c49d37f07641cfb8ea53298dce4d1015db0d02147b3eec322ce0a6",
+      "bytes": 41946
+    },
+    {
+      "path": "reports/s4_training_report.md",
+      "sha256": "fb4e04cafca78592b4d3c44e01279b1e0d8ec52f6a944d1e992726145172f603",
+      "bytes": 819
+    },
+    {
+      "path": "reports/belief_s4_test_evaluation.json",
+      "sha256": "57ead5ae27f75bdb568f91e25a9838b8eeecfd39df79a6366bc73f5906b6f4d2",
+      "bytes": 937
+    },
+    {
+      "path": "package/s4_cloud_training_package_20260711_repaired_cuda.zip",
+      "sha256": "0af59f2be0c47a62936ca05ee25bf1deb97592653b0a0ed4566f566564ff5f96",
+      "bytes": 1810168
+    },
+    {
+      "path": "manifest.json",
+      "sha256": "1988d08f4bdebda2634f275309ea8337f8678bd7cc4895e25a31ed367ab38318",
+      "bytes": 3557
+    }
+  ],
+  "omitted": [
+    "data/s4_decisions.jsonl"
+  ]
+}

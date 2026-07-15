@@ -1,0 +1,30 @@
+{
+  "belief_metrics": {
+    "discard_danger_brier": 0.017436678703153713,
+    "discard_danger_count": 397284,
+    "discard_danger_ece": 0.002441139864665277,
+    "opponent_tenpai_brier": 0.12588885477978293,
+    "opponent_tenpai_count": 44388,
+    "opponent_tenpai_ece": 0.019286227265851337,
+    "samples": 14796,
+    "tile_brier": 0.24320253974211986,
+    "tile_count": 361168,
+    "tile_log_loss": 0.9671382508145445
+  },
+  "execution_device": "cuda",
+  "games": 100,
+  "prior_belief_metrics": {
+    "discard_danger_brier": 0.018123055547165253,
+    "discard_danger_count": 397284,
+    "discard_danger_ece": 0.018123055547165253,
+    "opponent_tenpai_brier": 0.21740109939623323,
+    "opponent_tenpai_count": 44388,
+    "opponent_tenpai_ece": 0.21740109939623323,
+    "samples": 14796,
+    "tile_brier": 0.2763569552573361,
+    "tile_count": 361168,
+    "tile_log_loss": 1.0705177174854024
+  },
+  "records": 14796,
+  "split": "test"
+}

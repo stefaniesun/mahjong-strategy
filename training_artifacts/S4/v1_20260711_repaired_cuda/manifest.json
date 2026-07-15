@@ -1,0 +1,129 @@
+{
+  "acceptance_metrics": {
+    "belief_test": {
+      "discard_danger_brier": 0.017436678703153713,
+      "discard_danger_count": 397284,
+      "discard_danger_ece": 0.002441139864665277,
+      "opponent_tenpai_brier": 0.12588885477978293,
+      "opponent_tenpai_count": 44388,
+      "opponent_tenpai_ece": 0.019286227265851337,
+      "samples": 14796,
+      "tile_brier": 0.24320253974211986,
+      "tile_count": 361168,
+      "tile_log_loss": 0.9671382508145445
+    },
+    "belief_test_prior": {
+      "discard_danger_brier": 0.018123055547165253,
+      "discard_danger_count": 397284,
+      "discard_danger_ece": 0.018123055547165253,
+      "opponent_tenpai_brier": 0.21740109939623323,
+      "opponent_tenpai_count": 44388,
+      "opponent_tenpai_ece": 0.21740109939623323,
+      "samples": 14796,
+      "tile_brier": 0.2763569552573361,
+      "tile_count": 361168,
+      "tile_log_loss": 1.0705177174854024
+    },
+    "policy_test": {
+      "by_action_kind": {
+        "declare_void": {
+          "accuracy": 0.955,
+          "samples": 400
+        },
+        "discard": {
+          "accuracy": 0.6215644820295984,
+          "samples": 4257
+        },
+        "kong": {
+          "accuracy": 0.990909090909091,
+          "samples": 110
+        },
+        "pass": {
+          "accuracy": 0.9884488448844885,
+          "samples": 9090
+        },
+        "pong": {
+          "accuracy": 0.5787401574803149,
+          "samples": 254
+        },
+        "rob_kong_win": {
+          "accuracy": 1.0,
+          "samples": 1
+        },
+        "self_win": {
+          "accuracy": 1.0,
+          "samples": 105
+        },
+        "swap_three": {
+          "accuracy": 0.6275,
+          "samples": 400
+        },
+        "win": {
+          "accuracy": 1.0,
+          "samples": 179
+        }
+      },
+      "by_phase": {
+        "declare_void": {
+          "accuracy": 0.955,
+          "samples": 400
+        },
+        "play": {
+          "accuracy": 0.8696770505858816,
+          "samples": 13996
+        },
+        "swap_three": {
+          "accuracy": 0.6275,
+          "samples": 400
+        }
+      },
+      "forced_rate": 0.594147066774804,
+      "forced_samples": 8791,
+      "illegal_argmax_count": 0,
+      "illegal_probability_mass": 0.0,
+      "non_forced_accuracy": 0.668442964196503,
+      "non_forced_samples": 6005,
+      "pong_pass_response": {
+        "accuracy": 0.6518883415435139,
+        "samples": 609
+      },
+      "samples": 14796,
+      "top1_accuracy": 0.8654365539550781
+    }
+  },
+  "archived_at_utc": "2026-07-11T08:23:36.539408+00:00",
+  "artifact_version": "S4/v1_20260711_repaired_cuda",
+  "data": {
+    "fingerprint": "e92c4f67f65b4ada86b8018213f324341d7740c46e183d1c7597ac2e08556105",
+    "records": 143903,
+    "splits": {
+      "test": {
+        "games": 100,
+        "records": 14796
+      },
+      "train": {
+        "games": 800,
+        "records": 114940
+      },
+      "val": {
+        "games": 100,
+        "records": 14167
+      }
+    }
+  },
+  "execution": {
+    "device": "cuda"
+  },
+  "files": {
+    "belief_checkpoint": "checkpoints/belief_s4.pt",
+    "belief_test_report": "reports/belief_s4_test_evaluation.json",
+    "decision_records": "data/s4_decisions.jsonl",
+    "policy_checkpoint": "checkpoints/policy_s4.pt",
+    "training_report": "reports/s4_training_report.json"
+  },
+  "source_package": {
+    "filename": "s4_cloud_training_package_20260711_repaired_cuda.zip",
+    "sha256": "0af59f2be0c47a62936ca05ee25bf1deb97592653b0a0ed4566f566564ff5f96"
+  },
+  "status": "accepted_candidate_for_s5_cold_start"
+}

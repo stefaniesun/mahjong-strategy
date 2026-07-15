@@ -1,0 +1,17 @@
+# 四川麻将血战到底规则配置
+
+# 底分；所有胡牌分与杠钱都按该值等比缩放。
+base_score: 1
+
+# 封顶番数；只封胡牌番，直明杠/暗杠即时杠钱不受封顶影响。
+max_fan: 4
+
+# 自摸模式：
+# - add_di：自摸每家支付 番对应分 + 1 个底分
+# - add_fan：自摸先额外 +1 番再算分
+self_draw_mode: add_di
+
+# 极端番型预留开关，本阶段默认不实现。
+enable_heavenly_hand: false
+enable_earthly_hand: false
+enable_eighteen_arhats: false

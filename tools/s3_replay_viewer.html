@@ -1,0 +1,348 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>S3 Mahjong Replay Viewer</title>
+  <style>
+    :root { color-scheme: dark; --bg:#0d2018; --panel:#142c22; --line:#2f6b50; --text:#eef8f2; --muted:#a7c5b6; --hot:#f4c95d; --accent:#61d394; }
+    * { box-sizing: border-box; }
+    body { margin:0; font-family: system-ui, -apple-system, Segoe UI, sans-serif; background: radial-gradient(circle at 50% 38%, #1c5b3d 0, var(--bg) 62%); color:var(--text); overflow:hidden; }
+    header { height:46px; padding:8px 14px; display:flex; gap:12px; align-items:center; justify-content:space-between; border-bottom:1px solid rgba(255,255,255,.12); background:rgba(9,22,16,.82); position:sticky; top:0; z-index:5; }
+    h1 { margin:0; font-size:16px; }
+    button, input[type=file]::file-selector-button { border:0; border-radius:8px; padding:7px 10px; background:#245b42; color:var(--text); cursor:pointer; }
+    button:hover, input[type=file]::file-selector-button:hover { background:#327553; }
+    button.primary { background:#c68f25; color:#1d1203; font-weight:700; }
+    main { display:grid; grid-template-columns:minmax(0,1fr) 320px; gap:10px; padding:8px; height:calc(100vh - 46px); }
+    .table { position:relative; display:grid; grid-template-columns:30% 1fr 30%; grid-template-rows:minmax(120px,26%) 1fr minmax(120px,26%); grid-template-areas:"top top top" "left center right" "bottom bottom bottom"; gap:8px; min-height:0; height:100%; border:1px solid rgba(255,255,255,.14); border-radius:18px; padding:8px; background:rgba(7,52,33,.72); box-shadow: inset 0 0 70px rgba(0,0,0,.32); overflow:hidden; }
+    #players { display:contents; }
+    .center { grid-area:center; align-self:stretch; display:flex; flex-direction:column; justify-content:center; gap:6px; padding:12px; border-radius:16px; background:rgba(4,18,13,.72); border:1px solid rgba(255,255,255,.14); text-align:center; }
+    .player { position:static; width:100%; min-height:0; max-height:100%; overflow:hidden; padding:8px; border-radius:14px; background:rgba(9,32,24,.72); border:1px solid rgba(255,255,255,.11); }
+    .player.active { outline:3px solid var(--hot); box-shadow:0 0 22px rgba(244,201,93,.28); }
+    .p0 { grid-area:bottom; width:58%; justify-self:center; } .p2 { grid-area:top; width:58%; justify-self:center; } .p1 { grid-area:right; } .p3 { grid-area:left; }
+    .player h2 { margin:0 0 4px; font-size:13px; display:flex; justify-content:space-between; color:var(--accent); }
+    .row { display:flex; flex-wrap:wrap; gap:3px; min-height:27px; margin:3px 0; align-items:center; }
+    .label { width:42px; flex:0 0 42px; color:var(--muted); font-size:11px; }
+    .tiles { display:flex; flex-wrap:wrap; gap:2px; flex:1; }
+    .hand-with-draw { align-items:center; }
+    .drawn-tile { display:flex; }
+    .drawn-tile-gap { margin-left:28px; flex:0 0 auto; }
+
+    .tile { width:24px; height:34px; border-radius:4px; background:#f8f4e7; color:#111; display:grid; place-items:center; font-weight:800; font-size:11px; box-shadow:0 1px 2px rgba(0,0,0,.4); overflow:hidden; }
+
+    .tile.small { width:20px; height:28px; font-size:9px; }
+    .tile.latest { outline:2px solid var(--hot); transform:translateY(-2px); }
+    .tile img { width:100%; height:100%; object-fit:contain; display:block; }
+    .meld { display:flex; gap:2px; padding:2px; border:1px dashed rgba(255,255,255,.28); border-radius:5px; }
+    .event-card { flex:1; min-height:0; display:flex; flex-direction:column; }
+    .event { min-height:0; line-height:1.35; }
+    .event-scroll { flex:1; overflow:auto; padding-right:4px; display:flex; flex-direction:column-reverse; }
+    .event-entry { padding:7px 0; border-top:1px solid rgba(255,255,255,.08); display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+    .event-entry:first-child { border-top:0; }
+    .event-step { color:var(--muted); font-size:11px; min-width:46px; }
+    .event-line { display:inline-flex; align-items:center; gap:4px; flex-wrap:wrap; }
+    .event strong { color:var(--hot); display:inline-flex; align-items:center; gap:4px; flex-wrap:wrap; }
+    .event .muted { color:var(--muted); font-size:12px; }
+    .event-tile { width:22px; height:31px; margin:0 1px; vertical-align:middle; }
+
+
+    aside { display:flex; flex-direction:column; gap:8px; min-height:0; overflow:hidden; }
+
+    .card { background:rgba(10,28,21,.88); border:1px solid rgba(255,255,255,.12); border-radius:12px; padding:10px; }
+
+    .controls { display:grid; grid-template-columns:repeat(4,1fr); gap:8px; align-items:center; }
+    .controls input[type=range] { grid-column:1 / -1; width:100%; }
+    .kv { display:grid; grid-template-columns:105px 1fr; gap:6px; font-size:13px; }
+    .kv span:nth-child(odd) { color:var(--muted); }
+    pre { white-space:pre-wrap; word-break:break-word; max-height:260px; overflow:auto; background:#07140f; border-radius:10px; padding:10px; font-size:12px; }
+    .drop { border:1px dashed var(--line); border-radius:12px; padding:12px; color:var(--muted); }
+    .source { font-size:12px; color:var(--muted); line-height:1.45; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>S3 Mahjong Replay Viewer</h1>
+    <input id="fileInput" type="file" accept=".json,.jsonl,application/json" />
+  </header>
+  <main>
+    <section id="table" class="table">
+      <div id="players"></div>
+      <div class="center">
+        <strong id="title">拖入或选择 S3 回放文件</strong>
+        <div id="phase">支持 s3.replay.v1 JSON 与 S4 训练 JSONL</div>
+        <div id="wall"></div>
+        <div id="pending"></div>
+      </div>
+    </section>
+    <aside>
+      <div class="card controls">
+        <button onclick="prevStep()">上一步</button>
+        <button class="primary" onclick="togglePlay()" id="playBtn">播放</button>
+        <button onclick="nextStep()">下一步</button>
+        <button onclick="goEnd()">末尾</button>
+        <input id="stepRange" type="range" min="0" max="0" value="0" oninput="goStep(Number(this.value))" />
+        <label>速度 <input id="speed" type="range" min="150" max="1800" value="800" /></label>
+      </div>
+      <div class="card drop" id="dropZone">把 `docs/replays/*.json` 或训练 `.jsonl` 拖到这里。</div>
+      <div class="card kv" id="summary"></div>
+      <div class="card event-card"><h3>事件消息</h3><div class="event event-scroll" id="event"></div></div>
+      <div class="card source">牌图来源：FluffyStuff/riichi-mahjong-tiles，README 声明素材为 public domain。图片从本地 mahjong_tiles/ 加载；失败时自动显示文字牌。</div>
+
+
+    </aside>
+  </main>
+<script>
+const TILE_BASE = 'mahjong_tiles/';
+
+let replay = null, frames = [], index = 0, timer = null, eventLog = [];
+
+const $ = id => document.getElementById(id);
+
+function tileFile(code) {
+  if (!code) return 'Back.png';
+  const rank = code[0], suit = code[1];
+  const map = { W: 'Man', T: 'Sou', B: 'Pin' };
+  return `${map[suit] || 'Blank'}${rank}.png`;
+}
+function tileEl(code, small=false, latest=false) {
+  const d = document.createElement('span'); d.className = 'tile' + (small ? ' small' : '') + (latest ? ' latest' : ''); d.title = code || '';
+  const img = document.createElement('img'); img.src = TILE_BASE + tileFile(code); img.alt = code || 'tile'; img.onerror = () => { d.textContent = code || '?'; img.remove(); };
+  d.appendChild(img); return d;
+}
+function renderTiles(parent, tiles, small=false, latestIndex=-1) { parent.innerHTML = ''; (tiles || []).forEach((t, i) => parent.appendChild(tileEl(t, small, i === latestIndex))); }
+function removeOneTile(tiles=[], tile) {
+  let removed = false;
+  return tiles.filter(item => { if (!removed && item === tile) { removed = true; return false; } return true; });
+}
+function displayHandTiles(frame, player, hand, part) {
+  const drawPlayer = part?.player ?? frame?.player;
+  const drawnTile = player === drawPlayer && part?.kind === 'draw' ? part.drawnTile : null;
+  return { hand: drawnTile ? removeOneTile(hand || [], drawnTile) : (hand || []), drawnTile };
+}
+
+
+function formatAction(a) { if (!a) return ''; return [a.kind, a.tile, (a.tiles||[]).join(','), a.suit, a.kong_kind].filter(Boolean).join(' '); }
+
+
+
+function playerName(id) { return Number.isInteger(id) ? `玩家${id}` : '玩家-'; }
+function formatDice(state) {
+  if (Array.isArray(state?.dice) && state.dice.length === 2) return `${state.dice[0]} + ${state.dice[1]} = ${state.dice_sum ?? state.dice[0] + state.dice[1]}`;
+  if (state?.dice_sum != null) return `${state.dice_sum}`;
+  return '-';
+}
+function formatSwapDirection(direction) {
+  if (direction === 1) return '顺时针';
+  if (direction === -1) return '逆时针';
+  if (direction === 2) return '对家';
+  return '-';
+}
+function tileName(tile) { return tile || '未知牌'; }
+function playerState(state, player) { return state?.players?.[player] || {}; }
+
+function arrayAdded(before=[], after=[]) {
+  const counts = {};
+  before.forEach(item => { counts[item] = (counts[item] || 0) + 1; });
+  return after.filter(item => { if (counts[item] > 0) { counts[item] -= 1; return false; } return true; });
+}
+function findDrawnTile(frame) {
+  const player = frame?.player;
+  const before = playerState(frame?.before, player).hand || [];
+  const after = playerState(frame?.after, player).hand || [];
+  return arrayAdded(before, after)[0] || null;
+}
+function findTurnDraw(frame, previousFrame) {
+  const player = frame?.player;
+  if (player == null || !previousFrame?.after || !frame?.before) return null;
+  const beforeTurn = playerState(previousFrame.after, player).hand || [];
+  const atAction = playerState(frame.before, player).hand || [];
+  return arrayAdded(beforeTurn, atAction)[0] || null;
+}
+function inferDrawEvent(frame) {
+  if (!frame?.before || !frame?.after) return null;
+  const beforeWall = frame.before.wall_count;
+  const afterWall = frame.after.wall_count;
+  if (beforeWall == null || afterWall == null || afterWall >= beforeWall) return null;
+  const players = frame.after.players || [];
+  for (let player = 0; player < players.length; player += 1) {
+    const added = arrayAdded(playerState(frame.before, player).hand || [], playerState(frame.after, player).hand || []);
+    if (added.length) return { player, tile:added[0] };
+  }
+  return null;
+}
+function findLastDrawnTile(frame) {
+
+  const player = frame?.player;
+  if (player == null || !frame?.before || !frame?.after) return null;
+  const before = playerState(frame.before, player).hand || [];
+  const after = playerState(frame.after, player).hand || [];
+  return arrayAdded(before, after)[0] || null;
+}
+function findPlayerLastDraw(player, untilIndex) {
+  for (let i = untilIndex; i >= 0; i -= 1) {
+    const frame = frames[i];
+    if (frame?.player !== player) continue;
+    const action = frame?.action || {};
+    if (['discard', 'self_win'].includes(action.kind)) return action.tile || null;
+    const drawn = findLastDrawnTile(frame) || findTurnDraw(frame, frames[i - 1]);
+    if (drawn) return drawn;
+  }
+  return null;
+}
+function findRiverUpdate(frame) {
+
+
+  const players = frame?.after?.players || [];
+  for (let i = 0; i < players.length; i += 1) {
+    const beforeRiver = playerState(frame?.before, i).river || [];
+    const afterRiver = playerState(frame?.after, i).river || [];
+    if (afterRiver.length > beforeRiver.length) return { player:i, tile:afterRiver[afterRiver.length - 1], index:afterRiver.length - 1 };
+  }
+  return null;
+}
+function eventTileHtml(tile) {
+  if (!tile) return '<span>未知牌</span>';
+  const src = TILE_BASE + tileFile(tile);
+  return `<img class="tile event-tile" src="${src}" alt="${tile}" title="${tile}" onerror="this.outerHTML='${tile}'">`;
+}
+function eventTilesHtml(tiles=[]) { return tiles.length ? tiles.map(eventTileHtml).join('') : '-'; }
+function describeEvent(frame, previousFrame) {
+  const action = frame?.action || {}, player = frame?.player;
+  const lines = [];
+  const turnDraw = action.kind === 'draw' ? null : findTurnDraw(frame, previousFrame);
+  const inferredDraw = inferDrawEvent(frame);
+  if (turnDraw) lines.push(`${playerName(player)} 摸牌：${eventTileHtml(turnDraw)}`);
+  if (action.kind === 'draw') lines.push(`${playerName(player)} 摸牌：${eventTileHtml(action.tile || findDrawnTile(frame))}`);
+
+  else if (action.kind === 'discard') lines.push(`${playerName(player)} 打出：${eventTileHtml(action.tile)}`);
+
+  else if (action.kind === 'swap_three') lines.push(`${playerName(player)} 换三张：${eventTilesHtml(action.tiles || [])}`);
+  else if (action.kind === 'declare_void') lines.push(`${playerName(player)} 定缺：${action.suit || '-'}`);
+  else if (action.kind === 'pong') lines.push(`${playerName(player)} 碰牌：${eventTileHtml(action.tile)}，使用 ${eventTilesHtml(action.tiles || [])}`);
+  else if (action.kind === 'kong') lines.push(`${playerName(player)} 杠牌：${eventTileHtml(action.tile)} ${action.kong_kind || ''}`.trim());
+  else if (action.kind === 'win') lines.push(`${playerName(player)} 胡牌：${eventTileHtml(action.tile)}`);
+  else if (action.kind === 'self_win') lines.push(`${playerName(player)} 自摸胡：${eventTileHtml(action.tile || findDrawnTile(frame))}`);
+  else if (action.kind === 'rob_kong_win') lines.push(`${playerName(player)} 抢杠胡：${eventTileHtml(action.tile)}`);
+  else if (action.kind === 'pass') lines.push(`${playerName(player)} 选择过`);
+  else lines.push(`${playerName(player)} 执行动作：${formatAction(action) || '-'}`);
+  if (inferredDraw && !(action.kind === 'draw' && inferredDraw.player === player)) lines.push(`${playerName(inferredDraw.player)} 摸牌：${eventTileHtml(inferredDraw.tile)}`);
+  const riverUpdate = findRiverUpdate(frame);
+
+  if (riverUpdate) lines.push(`牌池更新：${playerName(riverUpdate.player)} 河牌新增 ${eventTileHtml(riverUpdate.tile)}`);
+  return lines;
+}
+
+
+function normalizeReplayJson(data) { return { meta:data.meta || {}, steps:data.steps || [], initial_state:data.initial_state, final_state:data.final_state, result:data.result || {}, schema:data.schema || 's3.replay.v1' }; }
+function normalizeJsonl(text) {
+  const records = text.split(/\r?\n/).filter(Boolean).map(line => JSON.parse(line));
+  const steps = records.map((r, i) => ({ step:r.step ?? i, player:r.player, phase:r.phase, action:r.action, legal_actions:r.legal_actions || [], before:protocolToState(r.state, r.player), after:protocolToState(r.state, r.player), training_record:r }));
+  return { schema:'s3.training.jsonl', meta:{ game_id:records[0]?.game_id || 'jsonl' }, steps, initial_state:steps[0]?.before, final_state:steps.at(-1)?.after, result:{ scores:records.at(-1)?.final_scores || [] } };
+}
+function protocolToState(state, perspective) {
+  const players = [0,1,2,3].map(id => ({ id, hand:[], melds:[], river:[], void_suit:null, score:null, won:false }));
+  const rawPlayers = state?.facts?.players?.value || state?.players || [];
+  rawPlayers.forEach((p, i) => {
+    const id = Number.isInteger(p.id) ? p.id : i;
+    players[id] = { id, hand:p.concealed_hand?.value || p.hand || [], melds:p.melds?.value || p.melds || [], river:p.river?.value || p.river || [], void_suit:p.void_suit?.value || p.void_suit || null, score:p.score?.value ?? p.score ?? null, won:p.won?.value ?? p.won ?? false };
+  });
+  return { phase:state?.phase || 'training', current_player:perspective, wall_count:state?.wall_count ?? null, pending_discard:null, players };
+}
+function setReplay(next) { replay = next; frames = replay.steps || []; index = 0; currentPart = 0; eventLog = []; $('stepRange').max = Math.max(0, frames.length - 1); render(); }
+function currentFrame() { return frames[index] || { before: replay?.initial_state, after: replay?.initial_state }; }
+function getVisibleRiverUpdate(frame, part) { return part?.kind === 'action' ? findRiverUpdate(frame) : null; }
+function getStepParts(frame, previousFrame) {
+
+  const action = frame?.action || {};
+  const inferredDraw = inferDrawEvent(frame);
+  const drawnTile = action.kind === 'draw' ? (action.tile || findDrawnTile(frame)) : findTurnDraw(frame, previousFrame);
+  if (action.kind === 'pass' && inferredDraw) return [{ kind:'draw', label:'摸牌', state:frame.after, player:inferredDraw.player, drawnTile:inferredDraw.tile, action:{ kind:'draw', tile:inferredDraw.tile } }];
+  const parts = [];
+  if (drawnTile && action.kind !== 'draw') parts.push({ kind:'draw', label:'摸牌', state:frame.before, drawnTile, action:{ kind:'draw', tile:drawnTile } });
+  parts.push({ kind:'action', label:action.kind === 'discard' ? '打牌' : '动作', state:frame.after || frame.before, drawnTile: action.kind === 'draw' ? drawnTile : null, action });
+  if (inferredDraw && action.kind !== 'draw') parts.push({ kind:'draw', label:'摸牌', state:frame.after, player:inferredDraw.player, drawnTile:inferredDraw.tile, action:{ kind:'draw', tile:inferredDraw.tile } });
+  return parts;
+}
+
+
+function currentStepParts() { return getStepParts(currentFrame(), frames[index - 1]); }
+function currentStepPart() { const parts = currentStepParts(); return parts[Math.min(currentPart, parts.length - 1)] || { kind:'action', label:'动作', state:currentFrame().after || currentFrame().before || replay?.initial_state, action:currentFrame().action || {} }; }
+function visibleStateForPart() { return currentStepPart().state || replay?.initial_state || { players:[] }; }
+function currentState() { return visibleStateForPart(); }
+
+function buildEventLog(untilIndex) {
+  const initial = replay?.initial_state
+    ? [{ step:0, line:`开局：庄家 ${playerName(replay.initial_state.dealer)} · 骰子 ${formatDice(replay.initial_state)} · 换三张 ${formatSwapDirection(replay.initial_state.swap_direction)}`, primary:true }]
+    : [];
+  const events = frames.slice(0, untilIndex + 1).flatMap((frame, i) => describeEvent(frame, frames[i - 1]).map((line, n) => ({ step:i + 1, line, primary:n === 0 })));
+
+  return initial.concat(events).reverse();
+}
+function renderEventLog() {
+  eventLog = buildEventLog(index);
+  const eventBox = $('event');
+  eventBox.innerHTML = eventLog.map(item => `<div class="event-entry"><div class="event-step">Step ${item.step}</div>${item.primary ? `<strong class="event-line">${item.line}</strong>` : `<div class="muted event-line">${item.line}</div>`}</div>`).join('');
+  eventBox.scrollTop = 0;
+}
+
+
+function render() {
+  const f = currentFrame(), part = currentStepPart(), s = currentState(); $('stepRange').value = index;
+  $('title').textContent = `${replay?.meta?.game_id || '未命名'} · Step ${index + 1}/${Math.max(frames.length, 1)} · ${part.label}`;
+  $('phase').textContent = `phase=${s.phase || f.phase || '-'} current=${s.current_player ?? '-'} schema=${replay?.schema || '-'}`;
+  $('wall').textContent = `牌墙剩余：${s.wall_count ?? '-'}`;
+  $('pending').textContent = s.pending_discard ? `待响应弃牌：P${s.pending_discard.discarder} ${s.pending_discard.tile}` : '';
+  const riverUpdate = getVisibleRiverUpdate(f, part);
+
+  const root = $('players'); root.innerHTML = '';
+  (s.players || []).forEach((p, n) => {
+    const activePlayer = part?.player ?? f.player;
+    const box = document.createElement('div'); box.className = `player p${n}` + ((activePlayer === n || s.current_player === n) ? ' active' : '');
+
+    box.innerHTML = `<h2><span>P${n}${p.won ? ' · 已胡' : ''}</span><span>${p.score ?? ''}</span></h2><div class="row"><span class="label">缺门</span><span>${p.void_suit || '-'}</span></div><div class="row"><span class="label">手牌</span><span class="tiles hand-with-draw"><span class="tiles hand"></span><span class="drawn-tile drawn-tile-gap"></span></span></div><div class="row"><span class="label">副露</span><span class="tiles melds"></span></div><div class="row"><span class="label">河牌</span><span class="tiles river"></span></div>`;
+
+    const visibleHand = displayHandTiles(f, n, p.hand || [], part);
+
+    renderTiles(box.querySelector('.hand'), visibleHand.hand);
+    if (visibleHand.drawnTile) box.querySelector('.drawn-tile').appendChild(tileEl(visibleHand.drawnTile, false, true));
+    const melds = box.querySelector('.melds'); (p.melds || []).forEach(m => { const wrap = document.createElement('span'); wrap.className='meld'; renderTiles(wrap, m.tiles || [], true); melds.appendChild(wrap); });
+
+    renderTiles(box.querySelector('.river'), p.river || [], true, riverUpdate?.player === n ? riverUpdate.index : -1);
+    root.appendChild(box);
+  });
+  $('summary').innerHTML = `<span>阶段</span><span>${part.label}</span><span>动作</span><span>${formatAction(part.action) || '-'}</span><span>玩家</span><span>${part?.player ?? f.player ?? '-'}</span><span>骰子</span><span>${formatDice(s)}</span><span>换三张</span><span>${formatSwapDirection(s.swap_direction)}</span><span>结果分</span><span>${(replay?.result?.scores || []).join(', ') || '-'}</span><span>完成</span><span>${replay?.result?.finished ?? '-'}</span>`;
+
+
+
+  renderEventLog();
+
+}
+function goStep(i) { index = Math.max(0, Math.min(i, frames.length - 1)); currentPart = 0; render(); }
+function prevStep() {
+  if (currentPart > 0) { currentPart -= 1; render(); return; }
+  goStep(index - 1);
+  currentPart = Math.max(0, currentStepParts().length - 1);
+  render();
+}
+function nextStep() {
+  const parts = currentStepParts();
+  if (currentPart < parts.length - 1) { currentPart += 1; render(); return; }
+  if (index >= frames.length - 1) { stopPlay(); return; }
+  goStep(index + 1);
+}
+function goEnd() { goStep(frames.length - 1); currentPart = Math.max(0, currentStepParts().length - 1); render(); }
+
+function togglePlay() { timer ? stopPlay() : startPlay(); }
+function startPlay() { $('playBtn').textContent = '暂停'; timer = setInterval(nextStep, Number($('speed').value)); }
+function stopPlay() { clearInterval(timer); timer = null; $('playBtn').textContent = '播放'; }
+async function loadFile(file) {
+  const text = await file.text(); const data = file.name.toLowerCase().endsWith('.jsonl') ? normalizeJsonl(text) : normalizeReplayJson(JSON.parse(text)); setReplay(data);
+}
+$('fileInput').addEventListener('change', e => e.target.files[0] && loadFile(e.target.files[0]));
+['dragenter','dragover'].forEach(ev => $('dropZone').addEventListener(ev, e => { e.preventDefault(); $('dropZone').style.borderColor = '#f4c95d'; }));
+['dragleave','drop'].forEach(ev => $('dropZone').addEventListener(ev, e => { e.preventDefault(); $('dropZone').style.borderColor = ''; }));
+$('dropZone').addEventListener('drop', e => e.dataTransfer.files[0] && loadFile(e.dataTransfer.files[0]));
+setReplay({ schema:'s3.replay.v1', meta:{game_id:'demo'}, steps:[], initial_state:{phase:'empty', players:[0,1,2,3].map(id => ({id, hand:[], melds:[], river:[]}))}, result:{} });
+</script>
+</body>
+</html>
