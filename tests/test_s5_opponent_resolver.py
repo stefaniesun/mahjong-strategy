@@ -10,10 +10,11 @@ from policies.opponent_pool import GreedyPolicy, RandomPolicy
 from policies.rule_policy import RulePolicy
 from rl.league import OpponentEntry, OpponentKind, SnapshotMetadata
 from rl.models.value_net import PolicyValueNet, PolicyValueNetConfig
+from state.encoder import encoding_table
 
 
 MODEL_CONFIG = PolicyValueNetConfig(
-    input_size=263,
+    input_size=encoding_table()[-1]["end"],
     action_size=637,
     hidden_size=8,
     residual_blocks=0,

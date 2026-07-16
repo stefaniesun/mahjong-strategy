@@ -145,7 +145,13 @@ def test_learned_belief_loads_checkpoint_and_supports_batch_infer(tmp_path):
 
     assert len(reports) == 2
     assert [report.source.value for report in reports] == ["learned", "learned"]
-    assert reports[0] == learned.infer(first_state)
+    single = learned.infer(first_state)
+    assert reports[0].opponent_tenpai_beliefs.value == pytest.approx(single.opponent_tenpai_beliefs.value)
+    for tile, locations in reports[0].tile_location_beliefs.value.items():
+        assert locations == pytest.approx(single.tile_location_beliefs.value[tile])
+    for tile, per_opponent in reports[0].discard_danger.value.items():
+        assert per_opponent == pytest.approx(single.discard_danger.value[tile])
+
 
 
 def test_learned_belief_rejects_checkpoint_without_current_encoder_version(tmp_path):

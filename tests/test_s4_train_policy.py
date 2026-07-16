@@ -220,7 +220,30 @@ def test_learned_policy_loads_checkpoint_on_cpu_and_selects_legal_action(tmp_pat
     assert action_to_index(action_to_protocol(action)) == target_index
 
 
+def test_learned_policy_rejects_previous_encoder_checkpoint(tmp_path):
+    torch_module = torch()
+    from learning.models.policy_net import PolicyNet, PolicyNetConfig
+    from policies.learned_policy import LearnedPolicy
+
+    model = PolicyNet(
+        PolicyNetConfig(input_size=263, action_size=action_space_size(), hidden_size=16, residual_blocks=1)
+    )
+    checkpoint = tmp_path / "legacy-policy.pt"
+    torch_module.save(
+        {
+            "model_config": model.config.__dict__,
+            "encoder_version": "s2.v4.encoder.v2",
+            "state_dict": model.state_dict(),
+        },
+        checkpoint,
+    )
+
+    with pytest.raises(ValueError, match="encoder version"):
+        LearnedPolicy(checkpoint)
+
+
 def test_learned_policy_requires_belief_checkpoint_for_learned_input(tmp_path):
+
     torch_module = torch()
     from learning.models.policy_net import PolicyNet, PolicyNetConfig
     from policies.learned_policy import LearnedPolicy

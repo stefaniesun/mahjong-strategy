@@ -31,7 +31,37 @@ def test_belief_training_step_updates_model_and_returns_loss_components():
     assert any(not torch_module.allclose(old, new) for old, new in zip(before, model.parameters()))
 
 
+def test_twenty_record_dataset_uses_upgraded_encoder_and_trains_one_epoch():
+    torch()
+    from learning.models.belief_net import BeliefNetConfig
+    from learning.training.train_belief import TrainBeliefConfig, train_belief_epoch
+    from state.encoder import ENCODER_VERSION
+
+    _, records = run_recorded_selfplay_game(game_id="encoder-v3-smoke", seed=120, max_steps=200)
+    assert len(records) >= 20
+    samples = [
+        build_belief_sample(record, DatasetBuildConfig(seed=5, degradation_profile="perfect"))
+        for record in records[:20]
+    ]
+
+    model, metrics = train_belief_epoch(
+        samples,
+        TrainBeliefConfig(
+            model=BeliefNetConfig(input_size=samples[0].encoded.size, hidden_size=16, residual_blocks=1),
+            batch_size=10,
+            device="cpu",
+        ),
+    )
+
+    assert {sample.encoded.version for sample in samples} == {ENCODER_VERSION}
+    assert {sample.encoded.size for sample in samples} == {806}
+    assert model.config.input_size == 806
+    assert metrics["samples"] == 20
+    assert math.isfinite(metrics["loss"])
+
+
 def test_train_belief_epoch_returns_average_metrics_for_batches():
+
     torch()
     from learning.models.belief_net import BeliefNetConfig
     from learning.training.train_belief import TrainBeliefConfig, train_belief_epoch

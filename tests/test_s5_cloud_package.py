@@ -101,8 +101,8 @@ def test_s5_cloud_arena_budget_defaults_by_mode(tmp_path: Path) -> None:
     assert S5CloudRunConfig(tmp_path / "train", mode="train").arena_games == 1000
 
 
-def test_s5_cloud_formal_train_composes_real_rollout_and_arena(monkeypatch, tmp_path: Path) -> None:
-    """Formal training must wire real game adapters, never synthetic steps/metrics."""
+def test_s5_cloud_formal_train_rejects_archived_pre_upgrade_s4_checkpoints(monkeypatch, tmp_path: Path) -> None:
+    """Formal S5 cannot silently consume S4 assets trained with the old encoder."""
     import tools.cloud_train_s5 as cloud
 
     captured = {}
@@ -128,16 +128,20 @@ def test_s5_cloud_formal_train_composes_real_rollout_and_arena(monkeypatch, tmp_
         },
     }), encoding="utf-8")
     monkeypatch.setattr("rl.train_rl.run_s5_training", fake_run)
-    result = cloud.run_s5_cloud_training(
-        cloud.S5CloudRunConfig(tmp_path / "out", mode="train", device="cpu", updates=1, episodes_per_update=2, arena_games=2),
-        project_root=ROOT,
-    )
+    with pytest.raises(ValueError, match="encoder version"):
+        cloud.run_s5_cloud_training(
+            cloud.S5CloudRunConfig(
+                tmp_path / "out",
+                mode="train",
+                device="cpu",
+                updates=1,
+                episodes_per_update=2,
+                arena_games=2,
+            ),
+            project_root=ROOT,
+        )
 
-    assert result.global_step == 1
-    dependencies = captured["dependencies"]
-    assert dependencies.rollout_factory.__name__ == "rollout"
-    assert dependencies.arena_evaluator.__name__ == "arena"
-    assert "controlled" not in result.manifest_path.read_text(encoding="utf-8")
+    assert captured == {}
 
 
 def test_s5_cloud_rejects_tampered_package_manifest_before_run(tmp_path: Path) -> None:

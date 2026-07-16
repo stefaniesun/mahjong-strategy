@@ -6,11 +6,15 @@ from typing import Any
 from engine.tiles import Tile, parse_tile, tile_to_str
 from state.protocol import ObservationStatus, ObservedValue, S2ProtocolState
 
-ENCODER_VERSION = "s2.v4.encoder.v2"
+ENCODER_VERSION = "s2.v4.encoder.v3"
 
 _TILE_COUNT = 27
 _LOCATION_ORDER = ("wall", "1", "2", "3")
 _PHASE_ORDER = ("exchange", "dingque", "play", "settlement")
+# Per-player discard sequence boundaries: 1-6 early, 7-12 middle, 13+ late.
+_DISCARD_EARLY_END = 6
+_DISCARD_MIDDLE_END = 12
+
 _SECTION_SPECS: tuple[tuple[str, int, str], ...] = (
     ("phase", 6, "phase one-hot(4), unknown flag, confidence"),
     ("current_player_relative", 6, "relative current player one-hot(4), unknown flag, confidence"),
@@ -27,7 +31,12 @@ _SECTION_SPECS: tuple[tuple[str, int, str], ...] = (
     ("observation_summary", 5, "observation start / 108, observed ratio, estimated ratio, degraded flag, confidence"),
     ("rule_config_summary", 4, "rule config numeric summary, unknown flag, confidence"),
     ("legal_action_summary", 6, "discard/pong/kong/hu/pass/action counts normalized, unknown flag"),
+    ("opponent_discard_counts", 87, "three opponents x 27 discard counts / 4, unknown flag, confidence"),
+    ("opponent_discard_phases", 249, "three opponents x early/middle/late discard counts / 4, unknown flag, confidence"),
+    ("opponent_meld_tiles", 87, "three opponents x 27 public meld tile counts / 4, unknown flag, confidence"),
+    ("last_discards", 120, "four relative players x last discard one-hot(27), none flag, unknown flag, confidence"),
 )
+
 
 
 @dataclass(frozen=True)
@@ -73,7 +82,12 @@ def encode_state(state: S2ProtocolState) -> EncodedState:
     values.extend(_observation_summary(state))
     values.extend(_rule_config_summary(state.rule_config))
     values.extend(_legal_action_summary(state.legal_actions))
+    values.extend(_opponent_discard_counts(state.facts.players))
+    values.extend(_opponent_discard_phases(state.facts.players))
+    values.extend(_opponent_meld_tiles(state.facts.players))
+    values.extend(_last_discards(state.facts.players))
     return EncodedState(values=tuple(float(value) for value in values), sections=_sections())
+
 
 
 def encoding_table() -> list[dict[str, Any]]:
@@ -153,7 +167,86 @@ def _player_void_suits(players: ObservedValue[list[dict[str, Any]]]) -> list[flo
     return encoded
 
 
+def _players_by_relative(players: ObservedValue[list[dict[str, Any]]]) -> dict[int, dict[str, Any]]:
+    if players.status is ObservationStatus.UNKNOWN or players.value is None:
+        return {}
+    return {
+        int(player["relative_position"]): player
+        for player in players.value
+        if player.get("relative_position") in (0, 1, 2, 3)
+    }
+
+
+def _player_field(
+    players: ObservedValue[list[dict[str, Any]]], relative: int, field: str
+) -> ObservedValue[Any]:
+    value = _players_by_relative(players).get(relative, {}).get(field)
+    return value if isinstance(value, ObservedValue) else ObservedValue.unknown()
+
+
+def _tile_counts(value: ObservedValue[Any], tiles: list[str] | None = None) -> list[float]:
+    if value.status is ObservationStatus.UNKNOWN or value.value is None:
+        return [0.0] * _TILE_COUNT + [1.0, 0.0]
+    counts = [0.0] * _TILE_COUNT
+    for tile_text in tiles if tiles is not None else value.value:
+        counts[parse_tile(tile_text).index] += 1.0
+    return [_clamp(count / 4.0) for count in counts] + [0.0, value.confidence]
+
+
+def _opponent_discard_counts(players: ObservedValue[list[dict[str, Any]]]) -> list[float]:
+    encoded: list[float] = []
+    for relative in (1, 2, 3):
+        encoded.extend(_tile_counts(_player_field(players, relative, "rivers")))
+    return encoded
+
+
+def _opponent_discard_phases(players: ObservedValue[list[dict[str, Any]]]) -> list[float]:
+    encoded: list[float] = []
+    for relative in (1, 2, 3):
+        rivers = _player_field(players, relative, "rivers")
+        if rivers.status is ObservationStatus.UNKNOWN or rivers.value is None:
+            encoded.extend([0.0] * (_TILE_COUNT * 3) + [1.0, 0.0])
+            continue
+        tiles = list(rivers.value)
+        counts: list[float] = []
+        for phase_tiles in (
+            tiles[:_DISCARD_EARLY_END],
+            tiles[_DISCARD_EARLY_END:_DISCARD_MIDDLE_END],
+            tiles[_DISCARD_MIDDLE_END:],
+        ):
+            counts.extend(_tile_counts(rivers, phase_tiles)[:_TILE_COUNT])
+        encoded.extend(counts + [0.0, rivers.confidence])
+    return encoded
+
+
+def _opponent_meld_tiles(players: ObservedValue[list[dict[str, Any]]]) -> list[float]:
+    encoded: list[float] = []
+    for relative in (1, 2, 3):
+        melds = _player_field(players, relative, "melds")
+        if melds.status is ObservationStatus.UNKNOWN or melds.value is None:
+            encoded.extend([0.0] * _TILE_COUNT + [1.0, 0.0])
+            continue
+        tiles = [tile for meld in melds.value for tile in meld.get("tiles", [])]
+        encoded.extend(_tile_counts(melds, tiles))
+    return encoded
+
+
+def _last_discards(players: ObservedValue[list[dict[str, Any]]]) -> list[float]:
+    encoded: list[float] = []
+    for relative in range(4):
+        rivers = _player_field(players, relative, "rivers")
+        one_hot = [0.0] * _TILE_COUNT
+        if rivers.status is ObservationStatus.UNKNOWN or rivers.value is None:
+            encoded.extend(one_hot + [0.0, 1.0, 0.0])
+            continue
+        if rivers.value:
+            one_hot[parse_tile(rivers.value[-1]).index] = 1.0
+        encoded.extend(one_hot + [float(not rivers.value), 0.0, rivers.confidence])
+    return encoded
+
+
 def _tile_location_beliefs(value: ObservedValue[dict[str, Any]]) -> list[float]:
+
 
     if value.status is ObservationStatus.UNKNOWN or value.value is None:
         return [0.25] * (_TILE_COUNT * len(_LOCATION_ORDER)) + [1.0, 0.0]
