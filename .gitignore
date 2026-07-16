@@ -11,8 +11,9 @@ venv/
 .env
 .env.*
 
-# Generated test output
+# Generated test and local training output
 pytest_*.out
+cloud_outputs/**/data/*.jsonl
 
 # IDE and OS metadata
 .vscode/

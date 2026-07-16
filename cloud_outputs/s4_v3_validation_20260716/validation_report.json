@@ -1,0 +1,56 @@
+{
+  "actions": {
+    "declare_void": 400,
+    "discard": 4229,
+    "kong": 86,
+    "pass": 8828,
+    "pong": 226,
+    "rob_kong_win": 2,
+    "self_win": 103,
+    "swap_three": 400,
+    "win": 174
+  },
+  "encoder_version": "s2.v4.encoder.v3",
+  "file_bytes": 145990218,
+  "games": 100,
+  "invalid_records": 0,
+  "phases": {
+    "declare_void": 400,
+    "play": 13648,
+    "swap_three": 400
+  },
+  "records": 14448,
+  "sample_checks": [
+    [
+      806,
+      806,
+      19,
+      true
+    ],
+    [
+      806,
+      806,
+      1,
+      true
+    ],
+    [
+      806,
+      806,
+      1,
+      true
+    ],
+    [
+      806,
+      806,
+      1,
+      true
+    ],
+    [
+      806,
+      806,
+      8,
+      true
+    ]
+  ],
+  "sha256": "d8b40013f2215779304e3750bd2c4fac529e5e2c1d88d8acf66146fd899e78a3"
+}
