@@ -1,13 +1,16 @@
 from dataclasses import replace
 import hashlib
 import struct
+import time
 
 import pytest
 
 from engine.hand import Hand
+from engine.meld import Meld, MeldKind
 
 from engine.state import GameState
-from engine.tiles import Suit, parse_tile
+from engine.tiles import Suit, Tile, parse_tile
+from state.hand_analysis import shanten, useful_tiles
 from state.adapters.from_engine import from_engine
 from state.encoder import ENCODER_VERSION, encode_state, encoding_table
 
@@ -47,19 +50,23 @@ def test_encode_state_is_fixed_shape_deterministic_and_has_documented_sections()
     second = encode_state(state)
     table = encoding_table()
 
-    assert first.version == ENCODER_VERSION == "s2.v4.encoder.v3"
+    assert first.version == ENCODER_VERSION == "s2.v4.encoder.v4"
 
     assert first.values == second.values
-    assert len(first.values) == first.size == table[-1]["end"] == 806
+    assert len(first.values) == first.size == table[-1]["end"] == 893
     assert [section["offset"] for section in table] == sorted(section["offset"] for section in table)
     assert all(left["end"] == right["offset"] for left, right in zip(table, table[1:]))
-    assert [(section["name"], section["size"]) for section in table[-4:]] == [
+    assert [(section["name"], section["size"]) for section in table[-6:]] == [
         ("opponent_discard_counts", 87),
         ("opponent_discard_phases", 249),
         ("opponent_meld_tiles", 87),
         ("last_discards", 120),
+        ("own_hand_shanten", 4),
+        ("candidate_discard_features", 83),
     ]
-    assert table[-4]["offset"] == 263
+    assert table[-6]["offset"] == 263
+    assert table[-2]["offset"] == 806
+    assert table[-1]["offset"] == 810
     assert {section["name"] for section in table} >= {
 
         "own_hand_counts",
@@ -230,8 +237,142 @@ def test_new_sections_preserve_the_legacy_prefix_golden_output():
     digest = hashlib.sha256(struct.pack("<263d", *legacy_prefix)).hexdigest()
 
     assert digest == "9ca61b79d267f3acdd3a978db33088aa217dd6f85d99614f7c1dce6acfb21fe6"
-    assert encoded.size == 806
+    assert encoded.size == 893
 
+
+
+def _expected_candidate_values(state):
+    own = next(player for player in state.facts.players.value if player["relative_position"] == 0)
+    hand = Hand.from_strings(own["concealed_hand"].value)
+    for meld in own["melds"].value:
+        hand.add_meld(
+            Meld(
+                kind=MeldKind(meld["kind"]),
+                tiles=tuple(parse_tile(text) for text in meld["tiles"]),
+                exposed=meld.get("exposed", False),
+                from_player=meld.get("from_player"),
+            )
+        )
+    void = None if own["void_suit"].value is None else Suit(own["void_suit"].value)
+    remaining = state.statistics.remaining_tile_counts.value
+    expected = []
+    for index, count in enumerate(hand.counts):
+        if count == 0:
+            expected.extend((0.0, 0.0, 0.0))
+            continue
+        trial = Hand(counts=list(hand.counts), melds=list(hand.melds))
+        trial.remove(Tile.from_index(index))
+        useful_remaining = sum(remaining[parse_tile(text).index] for text in useful_tiles(trial, void))
+        expected.extend((1.0, max(0.0, shanten(trial, void) / 8.0), min(1.0, useful_remaining / 40.0)))
+    return hand, void, tuple(expected)
+
+
+@pytest.mark.parametrize(
+    "tiles,void_suit,meld",
+    [
+        (["1W", "1W", "2W", "3W", "4W", "5T", "6T", "7T", "2B", "3B", "4B", "9W", "9W", "9W"], Suit.BING, None),
+        (["1W", "2W", "3W", "4W", "5W", "6W", "7T", "8T", "9T", "2B", "3B", "4B", "5B", "5B"], Suit.BING, None),
+        (["1W", "1W", "2W", "2W", "4T", "4T", "6T", "6T", "3B", "3B", "7B", "7B", "9B", "9B"], None, None),
+        (["1W", "2W", "3W", "4T", "5T", "6T", "2B", "2B", "9B", "9B", "9B"], Suit.BING, ("pong", ["7W", "7W", "7W"])),
+    ],
+)
+def test_v4_hand_and_candidate_features_match_direct_hand_analysis(tiles, void_suit, meld):
+    state = _base_state()
+    players = [dict(player) for player in state.facts.players.value]
+    own = next(player for player in players if player["relative_position"] == 0)
+    own["concealed_hand"] = ObservedValue.observed(tiles)
+    own["void_suit"] = ObservedValue.observed(None if void_suit is None else void_suit.value)
+    own["melds"] = ObservedValue.observed(
+        [] if meld is None else [{"kind": meld[0], "tiles": meld[1], "exposed": True, "from_player": 1}]
+    )
+    state = replace(state, facts=replace(state.facts, players=ObservedValue.observed(players)))
+    hand, void, expected_candidates = _expected_candidate_values(state)
+    encoded = encode_state(state)
+    remaining = state.statistics.remaining_tile_counts.value
+    useful_remaining = sum(remaining[parse_tile(text).index] for text in useful_tiles(hand, void))
+
+    assert _section_values(encoded, "own_hand_shanten") == pytest.approx(
+        (max(0.0, shanten(hand, void) / 8.0), min(1.0, useful_remaining / 40.0), 0.0, 1.0)
+    )
+    candidates = _section_values(encoded, "candidate_discard_features")
+    assert candidates[:81] == pytest.approx(expected_candidates)
+    assert candidates[81:] == (0.0, 1.0)
+
+
+def test_v4_remaining_counts_unknown_uses_theoretical_fallback_and_lower_confidence():
+    state = _base_state()
+    degraded = replace(
+        state,
+        statistics=replace(state.statistics, remaining_tile_counts=ObservedValue.unknown()),
+    )
+    encoded = encode_state(degraded)
+    own = next(player for player in state.facts.players.value if player["relative_position"] == 0)
+    hand = Hand.from_strings(own["concealed_hand"].value)
+    void = Suit(own["void_suit"].value)
+    theoretical = tuple(4.0 - count for count in hand.counts)
+    useful_remaining = sum(theoretical[parse_tile(text).index] for text in useful_tiles(hand, void))
+
+    assert _section_values(encoded, "own_hand_shanten") == pytest.approx(
+        (shanten(hand, void) / 8.0, min(1.0, useful_remaining / 40.0), 0.0, 0.5)
+    )
+    assert _section_values(encoded, "candidate_discard_features")[-2:] == (0.0, 0.5)
+
+
+def test_v4_missing_own_hand_marks_both_sections_unknown():
+    state = _base_state()
+    players = [dict(player) for player in state.facts.players.value]
+    players[0]["concealed_hand"] = ObservedValue.unknown()
+    masked = replace(state, facts=replace(state.facts, players=ObservedValue.observed(players)))
+    encoded = encode_state(masked)
+
+    assert _section_values(encoded, "own_hand_shanten") == (0.0, 0.0, 1.0, 0.0)
+    candidates = _section_values(encoded, "candidate_discard_features")
+    assert candidates[:-2] == (0.0,) * 81
+    assert candidates[-2:] == (1.0, 0.0)
+
+
+def test_v4_features_survive_midgame_and_vision_degradation_and_ignore_opponent_hands():
+    state = _base_state()
+    baseline = encode_state(state)
+    degraded_states = [MidGameSnapshot(k=1).apply(state), VisionNoise(miss_rate=0.2, seed=7).apply(state)]
+    for degraded in degraded_states:
+        encoded = encode_state(degraded)
+        own_values = _section_values(encoded, "own_hand_shanten")
+        candidate_values = _section_values(encoded, "candidate_discard_features")
+        baseline_candidates = _section_values(baseline, "candidate_discard_features")
+        assert own_values[0] == _section_values(baseline, "own_hand_shanten")[0]
+        assert own_values[2] == 0.0
+        assert candidate_values[-2] == 0.0
+        assert candidate_values[0:81:3] == baseline_candidates[0:81:3]
+        assert candidate_values[1:81:3] == baseline_candidates[1:81:3]
+
+
+def test_v4_prefix_through_dimension_805_is_unchanged():
+    encoded = encode_state(_state_with_public_reading_features())
+    digest = hashlib.sha256(struct.pack("<806d", *encoded.values[:806])).hexdigest()
+    assert digest == "596a38c63a4bc1a18729d9d2a3d93b4768c4e8075b5d897bb4f673a26a973236"
+
+
+def test_v4_cached_feature_overhead_stays_within_v3_budget(monkeypatch):
+    import state.encoder as encoder_module
+
+    state = _state_with_public_reading_features()
+    encode_state(state)
+    iterations = 1000
+    started = time.perf_counter()
+    for _ in range(iterations):
+        encode_state(state)
+    v4_elapsed = time.perf_counter() - started
+
+    monkeypatch.setattr(encoder_module, "_own_hand_context", lambda state: None)
+    monkeypatch.setattr(encoder_module, "_own_hand_shanten", lambda context: [0.0] * 4)
+    monkeypatch.setattr(encoder_module, "_candidate_discard_features", lambda context: [0.0] * 83)
+    started = time.perf_counter()
+    for _ in range(iterations):
+        encode_state(state)
+    v3_equivalent_elapsed = time.perf_counter() - started
+
+    assert v4_elapsed <= v3_equivalent_elapsed * 2.0
 
 
 def test_complete_masked_and_midgame_states_keep_belief_and_legality_chain_available():
@@ -256,7 +397,7 @@ def test_complete_masked_and_midgame_states_keep_belief_and_legality_chain_avail
 
     for state in states:
         encoded = encode_state(state)
-        assert encoded.size == 806
+        assert encoded.size == 893
         assert len(legal_mask(state)) == action_space_size()
         assert PriorBelief().infer(state).source.value == "prior"
         assert learned.infer(state).source.value == "learned"

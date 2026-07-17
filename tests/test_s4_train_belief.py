@@ -54,8 +54,8 @@ def test_twenty_record_dataset_uses_upgraded_encoder_and_trains_one_epoch():
     )
 
     assert {sample.encoded.version for sample in samples} == {ENCODER_VERSION}
-    assert {sample.encoded.size for sample in samples} == {806}
-    assert model.config.input_size == 806
+    assert {sample.encoded.size for sample in samples} == {893}
+    assert model.config.input_size == 893
     assert metrics["samples"] == 20
     assert math.isfinite(metrics["loss"])
 

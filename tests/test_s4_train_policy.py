@@ -220,19 +220,23 @@ def test_learned_policy_loads_checkpoint_on_cpu_and_selects_legal_action(tmp_pat
     assert action_to_index(action_to_protocol(action)) == target_index
 
 
-def test_learned_policy_rejects_previous_encoder_checkpoint(tmp_path):
+@pytest.mark.parametrize(
+    ("encoder_version", "input_size"),
+    [("s2.v4.encoder.v2", 263), ("s2.v4.encoder.v3", 806)],
+)
+def test_learned_policy_rejects_previous_encoder_checkpoint(tmp_path, encoder_version, input_size):
     torch_module = torch()
     from learning.models.policy_net import PolicyNet, PolicyNetConfig
     from policies.learned_policy import LearnedPolicy
 
     model = PolicyNet(
-        PolicyNetConfig(input_size=263, action_size=action_space_size(), hidden_size=16, residual_blocks=1)
+        PolicyNetConfig(input_size=input_size, action_size=action_space_size(), hidden_size=16, residual_blocks=1)
     )
     checkpoint = tmp_path / "legacy-policy.pt"
     torch_module.save(
         {
             "model_config": model.config.__dict__,
-            "encoder_version": "s2.v4.encoder.v2",
+            "encoder_version": encoder_version,
             "state_dict": model.state_dict(),
         },
         checkpoint,

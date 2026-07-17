@@ -3,12 +3,20 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from engine.tiles import Tile, parse_tile, tile_to_str
+from engine.hand import Hand
+from engine.meld import Meld, MeldKind
+from engine.tiles import Suit, Tile, parse_tile, tile_to_str
+from state.hand_analysis import shanten, useful_tiles
 from state.protocol import ObservationStatus, ObservedValue, S2ProtocolState
 
-ENCODER_VERSION = "s2.v4.encoder.v3"
+ENCODER_VERSION = "s2.v4.encoder.v4"
 
 _TILE_COUNT = 27
+# Sichuan hands have a maximum useful shanten range of eight.
+_SHANTEN_SCALE = 8.0
+# Forty is the practical upper bound used to normalize useful remaining copies.
+_USEFUL_REMAINING_SCALE = 40.0
+_FALLBACK_REMAINING_CONFIDENCE = 0.5
 _LOCATION_ORDER = ("wall", "1", "2", "3")
 _PHASE_ORDER = ("exchange", "dingque", "play", "settlement")
 # Per-player discard sequence boundaries: 1-6 early, 7-12 middle, 13+ late.
@@ -35,6 +43,8 @@ _SECTION_SPECS: tuple[tuple[str, int, str], ...] = (
     ("opponent_discard_phases", 249, "three opponents x early/middle/late discard counts / 4, unknown flag, confidence"),
     ("opponent_meld_tiles", 87, "three opponents x 27 public meld tile counts / 4, unknown flag, confidence"),
     ("last_discards", 120, "four relative players x last discard one-hot(27), none flag, unknown flag, confidence"),
+    ("own_hand_shanten", 4, "current shanten / 8, useful remaining copies / 40, unknown flag, confidence"),
+    ("candidate_discard_features", 83, "27 tiles x availability, post-discard shanten / 8, useful remaining copies / 40, unknown flag, confidence"),
 )
 
 
@@ -86,6 +96,9 @@ def encode_state(state: S2ProtocolState) -> EncodedState:
     values.extend(_opponent_discard_phases(state.facts.players))
     values.extend(_opponent_meld_tiles(state.facts.players))
     values.extend(_last_discards(state.facts.players))
+    hand_context = _own_hand_context(state)
+    values.extend(_own_hand_shanten(hand_context))
+    values.extend(_candidate_discard_features(hand_context))
     return EncodedState(values=tuple(float(value) for value in values), sections=_sections())
 
 
@@ -245,9 +258,104 @@ def _last_discards(players: ObservedValue[list[dict[str, Any]]]) -> list[float]:
     return encoded
 
 
+@dataclass(frozen=True)
+class _OwnHandContext:
+    hand: Hand | None
+    void_suit: Suit | None
+    remaining_counts: tuple[float, ...]
+    confidence: float
+
+
+def _own_hand_context(state: S2ProtocolState) -> _OwnHandContext:
+    player = _players_by_relative(state.facts.players).get(0)
+    if player is None:
+        return _OwnHandContext(None, None, tuple([0.0] * _TILE_COUNT), 0.0)
+    concealed = player.get("concealed_hand")
+    melds = player.get("melds")
+    void_suit = player.get("void_suit")
+    if (
+        not isinstance(concealed, ObservedValue)
+        or concealed.status is ObservationStatus.UNKNOWN
+        or concealed.value is None
+        or not isinstance(melds, ObservedValue)
+        or melds.status is ObservationStatus.UNKNOWN
+        or melds.value is None
+    ):
+        return _OwnHandContext(None, None, tuple([0.0] * _TILE_COUNT), 0.0)
+
+    hand = Hand.from_strings(concealed.value)
+    try:
+        for meld in melds.value:
+            hand.add_meld(
+                Meld(
+                    kind=MeldKind(meld["kind"]),
+                    tiles=tuple(parse_tile(text) for text in meld["tiles"]),
+                    exposed=bool(meld.get("exposed", False)),
+                    from_player=meld.get("from_player"),
+                )
+            )
+    except (KeyError, TypeError, ValueError):
+        return _OwnHandContext(None, None, tuple([0.0] * _TILE_COUNT), 0.0)
+
+    confidence = min(concealed.confidence, melds.confidence)
+    suit: Suit | None = None
+    if isinstance(void_suit, ObservedValue):
+        if void_suit.status is ObservationStatus.UNKNOWN:
+            confidence = min(confidence, _FALLBACK_REMAINING_CONFIDENCE)
+        elif void_suit.value is not None:
+            suit = Suit(void_suit.value)
+            confidence = min(confidence, void_suit.confidence)
+
+    remaining = state.statistics.remaining_tile_counts
+    if remaining.status is ObservationStatus.UNKNOWN or remaining.value is None:
+        remaining_counts = tuple(max(0.0, 4.0 - float(count)) for count in hand.counts)
+        confidence = min(confidence, _FALLBACK_REMAINING_CONFIDENCE)
+    else:
+        padded = list(remaining.value[:_TILE_COUNT]) + [0.0] * _TILE_COUNT
+        remaining_counts = tuple(max(0.0, float(value)) for value in padded[:_TILE_COUNT])
+        confidence = min(confidence, remaining.confidence)
+    return _OwnHandContext(hand, suit, remaining_counts, confidence)
+
+
+def _useful_remaining_count(hand: Hand, void_suit: Suit | None, remaining_counts: tuple[float, ...]) -> float:
+    return sum(remaining_counts[parse_tile(tile_text).index] for tile_text in useful_tiles(hand, void_suit))
+
+
+def _own_hand_shanten(context: _OwnHandContext) -> list[float]:
+    if context.hand is None:
+        return [0.0, 0.0, 1.0, 0.0]
+    return [
+        _clamp(float(shanten(context.hand, context.void_suit)) / _SHANTEN_SCALE),
+        _clamp(_useful_remaining_count(context.hand, context.void_suit, context.remaining_counts) / _USEFUL_REMAINING_SCALE),
+        0.0,
+        context.confidence,
+    ]
+
+
+def _candidate_discard_features(context: _OwnHandContext) -> list[float]:
+    if context.hand is None:
+        return [0.0] * (_TILE_COUNT * 3) + [1.0, 0.0]
+    encoded: list[float] = []
+    for index, count in enumerate(context.hand.counts):
+        if count <= 0:
+            encoded.extend((0.0, 0.0, 0.0))
+            continue
+        trial = Hand(counts=list(context.hand.counts), melds=list(context.hand.melds))
+        trial.remove(Tile.from_index(index))
+        encoded.extend(
+            (
+                1.0,
+                _clamp(float(shanten(trial, context.void_suit)) / _SHANTEN_SCALE),
+                _clamp(
+                    _useful_remaining_count(trial, context.void_suit, context.remaining_counts)
+                    / _USEFUL_REMAINING_SCALE
+                ),
+            )
+        )
+    return encoded + [0.0, context.confidence]
+
+
 def _tile_location_beliefs(value: ObservedValue[dict[str, Any]]) -> list[float]:
-
-
     if value.status is ObservationStatus.UNKNOWN or value.value is None:
         return [0.25] * (_TILE_COUNT * len(_LOCATION_ORDER)) + [1.0, 0.0]
     encoded: list[float] = []

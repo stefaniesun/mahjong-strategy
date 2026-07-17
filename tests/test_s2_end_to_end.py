@@ -55,7 +55,7 @@ def _assert_protocol_round_trip_and_encoding(state: S2ProtocolState) -> None:
 
     assert restored == state
     assert restored.version == "s2.v4"
-    assert encoded.version == "s2.v4.encoder.v3"
+    assert encoded.version == "s2.v4.encoder.v4"
 
 
     assert encoded.size == len(encoded.values)
