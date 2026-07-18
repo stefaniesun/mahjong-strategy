@@ -23,9 +23,15 @@ from typing import Iterable
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-S4_ARCHIVE = Path("training_artifacts/S4/v1_20260711_repaired_cuda")
+S4_ARCHIVE = Path("training_artifacts/S4/v5_20260718_encoder_v4")
 S4_BELIEF = S4_ARCHIVE / "checkpoints/belief_s4.pt"
 S4_POLICY = S4_ARCHIVE / "checkpoints/policy_s4.pt"
+S4_RELEASE = "S4/v5_20260718_encoder_v4"
+S4_V5_COLD_START_POLICY_VERSION = "s4-v5-encoder-v4-cold-start"
+S4_REQUIRED_SHA256 = {
+    "checkpoints/belief_s4.pt": "caa9775e65070e6196a2b020fc013783bbd818c54f763911286a0165915f3e01",
+    "checkpoints/policy_s4.pt": "3c23f0b7841298ff0cd9fd531a6f261fdb0a07436b08f9896bf32feb090fd8e2",
+}
 PACKAGE_FORMAT_VERSION = 2
 PACKAGE_MANIFEST_NAME = "s5_cloud_package_manifest.json"
 _ZIP_TIMESTAMP = (1980, 1, 1, 0, 0, 0)
@@ -94,10 +100,9 @@ def _runtime_paths(root: Path) -> tuple[Path, ...]:
     paths.extend(path for path in (root / "configs").rglob("*") if path.is_file())
     archive = root / S4_ARCHIVE
     for relative in (
-        Path("LOCAL_ARCHIVE_README.txt"), Path("manifest.json"), Path("local_file_checksums.json"),
-        Path("checkpoints/belief_s4.pt"), Path("checkpoints/policy_s4.pt"),
-        Path("reports/s4_training_report.json"), Path("reports/belief_s4_test_evaluation.json"),
-        Path("reports/s4_training_report.md"),
+        *(Path(name) for name in S4_REQUIRED_SHA256),
+        Path("reports/s4_training_report.json"),
+        Path("reports/s4_training_report.md"), Path("reports/belief_bucket_report.md"),
     ):
         path = archive / relative
         if not path.is_file():
@@ -108,28 +113,10 @@ def _runtime_paths(root: Path) -> tuple[Path, ...]:
 
 def _verify_s4_archive(root: Path) -> None:
     """Reject a package build/run if its accepted S4 archive was modified."""
-    checksum_path = root / S4_ARCHIVE / "local_file_checksums.json"
-    try:
-        payload = json.loads(checksum_path.read_text(encoding="utf-8"))
-        records = payload["verified_files"]
-    except (OSError, KeyError, TypeError, json.JSONDecodeError) as exc:
-        raise ValueError("accepted S4 checksum manifest is missing or invalid") from exc
-    required = {"manifest.json", "checkpoints/belief_s4.pt", "checkpoints/policy_s4.pt"}
-    found: set[str] = set()
-    if not isinstance(records, list):
-        raise ValueError("accepted S4 checksum manifest is missing or invalid")
-    for record in records:
-        if not isinstance(record, dict) or not isinstance(record.get("path"), str) or not isinstance(record.get("sha256"), str):
-            raise ValueError("accepted S4 checksum manifest is missing or invalid")
-        relative = Path(record["path"])
-        if relative.as_posix() not in required:
-            continue
+    for relative, expected_sha256 in S4_REQUIRED_SHA256.items():
         asset = root / S4_ARCHIVE / relative
-        if not asset.is_file() or _sha256(asset) != record["sha256"]:
-            raise ValueError(f"accepted S4 checksum mismatch: {relative.as_posix()}")
-        found.add(relative.as_posix())
-    if found != required:
-        raise ValueError("accepted S4 checksum manifest lacks required frozen assets")
+        if not asset.is_file() or _sha256(asset) != expected_sha256:
+            raise ValueError(f"accepted S4 checksum mismatch: {relative}")
 
 
 def verify_s5_cloud_package(root: Path = PROJECT_ROOT) -> None:
@@ -147,9 +134,17 @@ def verify_s5_cloud_package(root: Path = PROJECT_ROOT) -> None:
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
         records = manifest["files"]
         inventory = manifest["inventory"]
+        s4_artifacts = manifest["s4_artifacts"]
     except (OSError, KeyError, TypeError, json.JSONDecodeError) as exc:
         raise ValueError("package manifest is missing or invalid") from exc
-    if manifest.get("format_version") != PACKAGE_FORMAT_VERSION or not isinstance(records, list) or not isinstance(inventory, dict):
+    if (
+        manifest.get("format_version") != PACKAGE_FORMAT_VERSION
+        or not isinstance(records, list)
+        or not isinstance(inventory, dict)
+        or not isinstance(s4_artifacts, dict)
+        or s4_artifacts.get("release") != S4_RELEASE
+        or s4_artifacts.get("cold_start_policy_version") != S4_V5_COLD_START_POLICY_VERSION
+    ):
         raise ValueError("package manifest is missing or invalid")
     listed_paths = inventory.get("all_files")
     if (
@@ -194,8 +189,8 @@ def verify_s5_cloud_package(root: Path = PROJECT_ROOT) -> None:
         raise ValueError(f"package manifest verification failed: {missing[0]}")
     required = {
         "tools/cloud_train_s5.py",
-        "training_artifacts/S4/v1_20260711_repaired_cuda/checkpoints/belief_s4.pt",
-        "training_artifacts/S4/v1_20260711_repaired_cuda/checkpoints/policy_s4.pt",
+        S4_BELIEF.as_posix(),
+        S4_POLICY.as_posix(),
     }
     if not required.issubset(expected):
         raise ValueError("package manifest is missing required runtime assets")
@@ -221,6 +216,8 @@ def _package_manifest(root: Path, files: Iterable[Path]) -> bytes:
             "runtime_outputs": "must-be-outside-package-root",
         },
         "s4_artifacts": {
+            "release": S4_RELEASE,
+            "cold_start_policy_version": S4_V5_COLD_START_POLICY_VERSION,
             "belief": {"path": S4_BELIEF.as_posix(), "sha256": _sha256(s4_root / "checkpoints/belief_s4.pt")},
             "policy": {"path": S4_POLICY.as_posix(), "sha256": _sha256(s4_root / "checkpoints/policy_s4.pt")},
         },
@@ -297,7 +294,7 @@ def _controlled_dependencies(seed: int):
             outputs = model(torch.tensor(features, dtype=torch.float32), torch.tensor(masks, dtype=torch.bool))
             log_probs = torch.log_softmax(outputs.action_logits, dim=-1)
         return tuple(
-            TrajectoryStep(tuple(features[index]), tuple(masks[index]), actions[index], float(log_probs[index, actions[index]]), float(outputs.values[index]), 0.0 if index == 0 else 0.1, index == 1, "s4-v1-cold-start")
+            TrajectoryStep(tuple(features[index]), tuple(masks[index]), actions[index], float(log_probs[index, actions[index]]), float(outputs.values[index]), 0.0 if index == 0 else 0.1, index == 1, S4_V5_COLD_START_POLICY_VERSION)
             for index in range(2)
         )
 
@@ -308,7 +305,12 @@ def _controlled_dependencies(seed: int):
         return DualArenaMetrics(0.55 + offset, 0.53 + offset, 4, 4, 0, 0)
 
     def league() -> OpponentLeague:
-        return OpponentLeague(current_policy=SnapshotMetadata("s4-v1-cold-start", "s4-v1-cold-start", "cold-start.pt", 0))
+        return OpponentLeague(current_policy=SnapshotMetadata(
+            S4_V5_COLD_START_POLICY_VERSION,
+            S4_V5_COLD_START_POLICY_VERSION,
+            "cold-start.pt",
+            0,
+        ))
 
     def curriculum() -> ObservationCurriculum:
         return ObservationCurriculum(CurriculumConfig((
@@ -356,8 +358,8 @@ def _formal_dependencies(root: Path, cloud_config: S5CloudRunConfig):
 
     def league() -> OpponentLeague:
         return OpponentLeague(current_policy=SnapshotMetadata(
-            "s4-v1-cold-start",
-            "s4-v1-cold-start",
+            S4_V5_COLD_START_POLICY_VERSION,
+            S4_V5_COLD_START_POLICY_VERSION,
             str(frozen_policy_path),
             0,
             _sha256(frozen_policy_path),
@@ -488,11 +490,16 @@ def run_s5_cloud_training(config: S5CloudRunConfig, *, project_root: Path = PROJ
 
     belief, policy = root / S4_BELIEF, root / S4_POLICY
     dependencies = _controlled_dependencies(config.seed) if config.mode == "smoke" else _formal_dependencies(root, config)
+    frozen_s4_provenance = {
+        "release": S4_RELEASE,
+        "cold_start_policy_version": S4_V5_COLD_START_POLICY_VERSION,
+        "frozen_artifact_sha256": dict(S4_REQUIRED_SHA256),
+    }
     result = run_s5_training(S5TrainingConfig(
         output_dir=config.output_dir,
         frozen_s4_belief_path=belief,
         frozen_s4_policy_path=policy,
-        frozen_s4_provenance={"release": "S4/v1_20260711_repaired_cuda", "archive_manifest_sha256": _sha256(root / S4_ARCHIVE / "manifest.json")},
+        frozen_s4_provenance=frozen_s4_provenance,
         updates=config.updates,
         rollout_seed_start=config.seed,
         snapshot_interval=1,
@@ -511,9 +518,12 @@ def run_s5_cloud_training(config: S5CloudRunConfig, *, project_root: Path = PROJ
         ),
         "resolved_config": {**asdict(config), "output_dir": str(config.output_dir), "resolved_device": device},
         "s4_artifacts": {
+            "release": S4_RELEASE,
+            "cold_start_policy_version": S4_V5_COLD_START_POLICY_VERSION,
             "belief": {"path": str(belief), "sha256": _sha256(belief)},
             "policy": {"path": str(policy), "sha256": _sha256(policy)},
         },
+        "frozen_s4_provenance": frozen_s4_provenance,
         "artifacts": {
             "report_publication_manifest": {"path": str(result.publication_manifest_path), "sha256": _sha256(result.publication_manifest_path)},
             "checkpoint": {"path": str(result.checkpoint_path), "sha256": _sha256(result.checkpoint_path)},

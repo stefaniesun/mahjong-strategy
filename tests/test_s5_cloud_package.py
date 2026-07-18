@@ -34,8 +34,8 @@ def test_s5_cloud_package_is_deterministic_and_contains_only_runtime_assets(tmp_
         assert "engine/game.py" in names
         assert "state/tile_belief.py" in names
         assert "policies/rule_policy.py" in names
-        assert "training_artifacts/S4/v1_20260711_repaired_cuda/checkpoints/belief_s4.pt" in names
-        assert "training_artifacts/S4/v1_20260711_repaired_cuda/checkpoints/policy_s4.pt" in names
+        assert "training_artifacts/S4/v5_20260718_encoder_v4/checkpoints/belief_s4.pt" in names
+        assert "training_artifacts/S4/v5_20260718_encoder_v4/checkpoints/policy_s4.pt" in names
         assert "S5_CLOUD_TRAINING_README.md" in names
         assert "docs/concepts.md" in names
         assert all("s4_decisions.jsonl" not in name for name in names)
@@ -44,10 +44,39 @@ def test_s5_cloud_package_is_deterministic_and_contains_only_runtime_assets(tmp_
         assert manifest["inventory"]["policy"] == "closed"
         assert manifest["inventory"]["all_files"] == names
         assert manifest["s4_artifacts"]["policy"]["sha256"] == _sha256(
-            ROOT / "training_artifacts/S4/v1_20260711_repaired_cuda/checkpoints/policy_s4.pt"
+            ROOT / "training_artifacts/S4/v5_20260718_encoder_v4/checkpoints/policy_s4.pt"
         )
         for item in manifest["files"]:
             assert hashlib.sha256(archive.read(item["path"])).hexdigest() == item["sha256"]
+
+
+@pytest.mark.parametrize(
+    "package_name",
+    (
+        "s5_cloud_training_package_20260715.zip",
+        "s5_cloud_training_package_20260715_verify.zip",
+    ),
+)
+def test_checked_in_s5_cloud_packages_pin_the_accepted_v5_s4_release(package_name: str) -> None:
+    """The downloadable packages must match the current v5 package builder."""
+    from tools.cloud_train_s5 import (
+        S4_RELEASE,
+        S4_REQUIRED_SHA256,
+        S4_V5_COLD_START_POLICY_VERSION,
+    )
+
+    package = ROOT / "cloud_packages" / package_name
+    with zipfile.ZipFile(package) as archive:
+        names = archive.namelist()
+        manifest = json.loads(archive.read("s5_cloud_package_manifest.json"))
+
+    assert manifest["s4_artifacts"]["release"] == S4_RELEASE
+    assert manifest["s4_artifacts"]["cold_start_policy_version"] == S4_V5_COLD_START_POLICY_VERSION
+    for relative, expected_sha256 in S4_REQUIRED_SHA256.items():
+        path = f"training_artifacts/S4/v5_20260718_encoder_v4/{relative}"
+        assert path in names
+        assert manifest["s4_artifacts"]["belief" if "belief" in relative else "policy"]["sha256"] == expected_sha256
+    assert not any("training_artifacts/S4/v1_" in name for name in names)
 
 
 def test_s5_cloud_package_extracts_verifies_and_runs_cpu_smoke(tmp_path: Path) -> None:
@@ -101,8 +130,8 @@ def test_s5_cloud_arena_budget_defaults_by_mode(tmp_path: Path) -> None:
     assert S5CloudRunConfig(tmp_path / "train", mode="train").arena_games == 1000
 
 
-def test_s5_cloud_formal_train_rejects_archived_pre_upgrade_s4_checkpoints(monkeypatch, tmp_path: Path) -> None:
-    """Formal S5 cannot silently consume S4 assets trained with the old encoder."""
+def test_s5_cloud_formal_train_uses_accepted_v5_s4_checkpoints(monkeypatch, tmp_path: Path) -> None:
+    """Formal S5 config must name the accepted encoder.v4 S4 release."""
     import tools.cloud_train_s5 as cloud
 
     captured = {}
@@ -128,20 +157,70 @@ def test_s5_cloud_formal_train_rejects_archived_pre_upgrade_s4_checkpoints(monke
         },
     }), encoding="utf-8")
     monkeypatch.setattr("rl.train_rl.run_s5_training", fake_run)
-    with pytest.raises(ValueError, match="encoder version"):
-        cloud.run_s5_cloud_training(
-            cloud.S5CloudRunConfig(
-                tmp_path / "out",
-                mode="train",
-                device="cpu",
-                updates=1,
-                episodes_per_update=2,
-                arena_games=2,
-            ),
-            project_root=ROOT,
+    cloud.run_s5_cloud_training(
+        cloud.S5CloudRunConfig(
+            tmp_path / "out",
+            mode="train",
+            device="cpu",
+            updates=1,
+            episodes_per_update=2,
+            arena_games=2,
+        ),
+        project_root=ROOT,
+    )
+
+    assert captured["config"].frozen_s4_provenance["release"] == "S4/v5_20260718_encoder_v4"
+    assert captured["config"].frozen_s4_policy_path == ROOT / "training_artifacts/S4/v5_20260718_encoder_v4/checkpoints/policy_s4.pt"
+
+
+def test_s5_cloud_controlled_smoke_uses_single_v5_cold_start_provenance(monkeypatch, tmp_path: Path) -> None:
+    """The controlled bootstrap path must never relabel the pinned v5 seed as v1."""
+    import tools.cloud_train_s5 as cloud
+    from rl.models.value_net import PolicyValueNet, PolicyValueNetConfig
+
+    captured = {}
+
+    def fake_run(config, *, dependencies):
+        captured["dependencies"] = dependencies
+        return Mock(
+            report_path=tmp_path / "report.json", markdown_path=tmp_path / "report.md",
+            checkpoint_path=tmp_path / "latest.pt", publication_manifest_path=tmp_path / "report.manifest.json",
+            report={"arena": {"s3_comparison": {"perfect_win_rate": 0.5, "degraded_win_rate": 0.5}}}, global_step=1,
         )
 
-    assert captured == {}
+    report_json, report_markdown, checkpoint = "{}", "# report\n", "checkpoint"
+    (tmp_path / "report.json").write_text(report_json, encoding="utf-8")
+    (tmp_path / "report.md").write_text(report_markdown, encoding="utf-8")
+    (tmp_path / "latest.pt").write_text(checkpoint, encoding="utf-8")
+    (tmp_path / "report.manifest.json").write_text(json.dumps({
+        "format_version": 1,
+        "artifacts": {
+            "json": {"name": "report.json", "sha256": hashlib.sha256(report_json.encode()).hexdigest()},
+            "markdown": {"name": "report.md", "sha256": hashlib.sha256(report_markdown.encode()).hexdigest()},
+        },
+    }), encoding="utf-8")
+    monkeypatch.setattr("rl.train_rl.run_s5_training", fake_run)
+
+    output_dir = tmp_path / "out"
+    cloud.run_s5_cloud_training(
+        cloud.S5CloudRunConfig(output_dir, mode="smoke", device="cpu"), project_root=ROOT
+    )
+
+    dependencies = captured["dependencies"]
+    model = PolicyValueNet(PolicyValueNetConfig(input_size=3, action_size=4, hidden_size=4))
+    steps = dependencies.rollout_factory(model, None, 0, 7, None)
+    cold_start = dependencies.league_factory().entries[0].snapshot
+    manifest = json.loads((output_dir / "s5_cloud_run_manifest.json").read_text(encoding="utf-8"))
+
+    assert {step.policy_version for step in steps} == {cloud.S4_V5_COLD_START_POLICY_VERSION}
+    assert cold_start is not None
+    assert {cold_start.snapshot_id, cold_start.policy_version} == {cloud.S4_V5_COLD_START_POLICY_VERSION}
+    assert manifest["frozen_s4_provenance"]["cold_start_policy_version"] == cloud.S4_V5_COLD_START_POLICY_VERSION
+    assert "s4-v1" not in json.dumps({
+        "trajectory_versions": [step.policy_version for step in steps],
+        "league": {"snapshot_id": cold_start.snapshot_id, "policy_version": cold_start.policy_version},
+        "manifest": manifest,
+    })
 
 
 def test_s5_cloud_rejects_tampered_package_manifest_before_run(tmp_path: Path) -> None:

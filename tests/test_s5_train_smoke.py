@@ -71,8 +71,8 @@ def test_default_model_rejects_unsafe_s4_policy_artifact(tmp_path) -> None:
         _default_model(config)
 
 
-def test_default_model_infers_the_archived_s4_policy_architecture() -> None:
-    """The production S4 archive must boot S5 without stale placeholder sizes."""
+def test_default_model_rejects_archived_s4_policy_with_stale_encoder_version() -> None:
+    """S5 must not silently combine the active v4 encoder with an older S4 policy."""
     from rl.train_rl import _default_model
 
     root = Path(__file__).resolve().parents[1]
@@ -82,17 +82,13 @@ def test_default_model_infers_the_archived_s4_policy_architecture() -> None:
     if not belief.is_file() or not policy.is_file():
         pytest.skip("local S4 v1 archive is unavailable")
 
-    model = _default_model(S5TrainingConfig(
-        output_dir=archive / "_test_output",
-        frozen_s4_belief_path=belief,
-        frozen_s4_policy_path=policy,
-        frozen_s4_provenance={"release": "S4-v1"},
-    ))
-    payload = torch.load(policy, map_location="cpu", weights_only=True)
-    state = payload["state_dict"]
-    assert model.config == PolicyValueNetConfig(input_size=263, action_size=637, hidden_size=128, residual_blocks=2, dropout=0.0)
-    assert torch.equal(model.trunk[0].weight, state["trunk.0.weight"])
-    assert torch.equal(model.action_head.weight, state["action_head.weight"])
+    with pytest.raises(ValueError, match="encoder version"):
+        _default_model(S5TrainingConfig(
+            output_dir=archive / "_test_output",
+            frozen_s4_belief_path=belief,
+            frozen_s4_policy_path=policy,
+            frozen_s4_provenance={"release": "S4-v1"},
+        ))
 
 
 def test_default_model_rejects_explicit_dimensions_that_conflict_with_s4_policy(tmp_path) -> None:
@@ -103,9 +99,12 @@ def test_default_model_rejects_explicit_dimensions_that_conflict_with_s4_policy(
     belief = tmp_path / "belief.pt"
     policy = tmp_path / "policy.pt"
     belief.write_bytes(b"frozen-belief")
-    source = PolicyNet(PolicyNetConfig(input_size=3, action_size=4, hidden_size=8, residual_blocks=0))
+    from state.encoder import ENCODER_VERSION, encoding_size
+
+    source = PolicyNet(PolicyNetConfig(input_size=encoding_size(), action_size=4, hidden_size=8, residual_blocks=0))
     torch.save({
-        "model_config": {"input_size": 3, "action_size": 4, "hidden_size": 8, "residual_blocks": 0, "dropout": 0.0},
+        "encoder_version": ENCODER_VERSION,
+        "model_config": {"input_size": encoding_size(), "action_size": 4, "hidden_size": 8, "residual_blocks": 0, "dropout": 0.0},
         "state_dict": source.state_dict(),
     }, policy)
     config = S5TrainingConfig(

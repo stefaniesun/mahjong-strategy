@@ -107,7 +107,7 @@ class LearnedBelief(TileBelief):
         import torch
         from learning.models.belief_net import BeliefNet, BeliefNetConfig
 
-        from state.encoder import ENCODER_VERSION
+        from state.encoder import ENCODER_VERSION, encoding_size
 
         checkpoint = torch.load(model_path, map_location="cpu", weights_only=True)
         if not isinstance(checkpoint, dict):
@@ -122,6 +122,15 @@ class LearnedBelief(TileBelief):
 
         if config_data is None:
             raise ValueError("checkpoint must include model_config")
+        if not isinstance(config_data, dict):
+            raise ValueError("belief checkpoint model_config must be a mapping")
+        checkpoint_input_size = config_data.get("input_size")
+        current_input_size = encoding_size()
+        if checkpoint_input_size != current_input_size:
+            raise ValueError(
+                f"belief checkpoint input_size={checkpoint_input_size!r} does not "
+                f"match current encoder input_size={current_input_size}"
+            )
         model = BeliefNet(BeliefNetConfig(**config_data))
         model.load_state_dict(checkpoint.get("state_dict") or checkpoint.get("model_state_dict"))
         return model

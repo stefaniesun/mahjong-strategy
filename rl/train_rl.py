@@ -20,6 +20,7 @@ from rl.league import DualArenaMetrics, OpponentEntry, OpponentLeague, SnapshotM
 from rl.models.value_net import PolicyValueNet, PolicyValueNetConfig
 from rl.ppo_trainer import PPOBatch, PPOConfig, PPOHealth, ppo_update
 from rl.types import TrajectoryStep
+from state.encoder import ENCODER_VERSION, encoding_size
 
 
 @dataclass(frozen=True, slots=True)
@@ -73,8 +74,8 @@ class S5TrainingConfig:
     snapshot_interval: int = 1
     device: str = "cpu"
     # None means "derive this from the frozen S4 PolicyNet checkpoint".  The
-    # old 80/64 defaults were placeholders and silently disagreed with the
-    # archived S4-v1 policy (263/637).
+    # Old placeholder defaults silently disagreed with archived policies; the
+    # active S4 artifact is now the sole source of this model contract.
     feature_size: int | None = None
     action_size: int | None = None
     hidden_size: int | None = None
@@ -271,6 +272,24 @@ def _frozen_s4_policy_architecture(payload: Mapping[str, object]) -> _S4PolicyAr
     )
 
 
+def _validate_frozen_s4_policy_encoder(
+    payload: Mapping[str, object], architecture: _S4PolicyArchitecture
+) -> None:
+    """Require the policy artifact to describe exactly the active encoder."""
+    checkpoint_version = payload.get("encoder_version")
+    if checkpoint_version != ENCODER_VERSION:
+        raise ValueError(
+            f"frozen S4 policy checkpoint encoder version {checkpoint_version!r} "
+            f"is incompatible with {ENCODER_VERSION!r}"
+        )
+    current_size = encoding_size()
+    if architecture.feature_size != current_size:
+        raise ValueError(
+            f"frozen S4 policy input_size={architecture.feature_size} does not "
+            f"match current encoder input_size={current_size}"
+        )
+
+
 def _resolved_s5_model_config(config: S5TrainingConfig, architecture: _S4PolicyArchitecture) -> PolicyValueNetConfig:
     """Infer S5 dimensions from S4, rejecting every conflicting override."""
     requested = {
@@ -306,6 +325,7 @@ def _resolved_s5_model_config(config: S5TrainingConfig, architecture: _S4PolicyA
 def _default_model(config: S5TrainingConfig) -> PolicyValueNet:
     payload = _load_frozen_s4_policy_payload(config.frozen_s4_policy_path)
     architecture = _frozen_s4_policy_architecture(payload)
+    _validate_frozen_s4_policy_encoder(payload, architecture)
     model = PolicyValueNet(_resolved_s5_model_config(config, architecture))
     state = payload.get("model_state_dict", payload.get("state_dict", payload))
     if not isinstance(state, Mapping):
@@ -315,6 +335,17 @@ def _default_model(config: S5TrainingConfig) -> PolicyValueNet:
     except (AttributeError, RuntimeError, ValueError) as exc:
         raise ValueError("frozen S4 policy weights are incompatible with its model_config") from exc
     return model
+
+
+def _frozen_reference_policy(source: PolicyValueNet) -> PolicyValueNet:
+    """Create the immutable PPO KL anchor from the initial S4-v5 policy."""
+    if not isinstance(source, PolicyValueNet):
+        raise TypeError("PPO reference source must be PolicyValueNet")
+    reference = copy.deepcopy(source)
+    reference.eval()
+    for parameter in reference.parameters():
+        parameter.requires_grad_(False)
+    return reference
 
 
 def _batch_from_steps(steps: Sequence[TrajectoryStep], reference_model: PolicyValueNet) -> PPOBatch:
@@ -563,10 +594,12 @@ def run_s5_training(config: S5TrainingConfig, *, dependencies: S5TrainingDepende
     if not isinstance(optimizer, torch.optim.Optimizer):
         raise TypeError("optimizer_factory must return a torch Optimizer")
     provenance = _artifact_provenance(config)
-    reference = (dependencies.reference_model_factory(model, config) if dependencies.reference_model_factory else copy.deepcopy(model)).to(device)
-    reference.eval()
-    for parameter in reference.parameters():
-        parameter.requires_grad_(False)
+    reference_source = (
+        dependencies.reference_model_factory(model, config)
+        if dependencies.reference_model_factory
+        else model
+    )
+    reference = _frozen_reference_policy(reference_source).to(device)
     league = dependencies.league_factory() if dependencies.league_factory else None
     curriculum = dependencies.curriculum_factory() if dependencies.curriculum_factory else None
     if not isinstance(league, OpponentLeague) or not isinstance(curriculum, ObservationCurriculum):

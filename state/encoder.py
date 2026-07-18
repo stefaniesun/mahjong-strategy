@@ -107,6 +107,15 @@ def encoding_table() -> list[dict[str, Any]]:
     return [section.__dict__.copy() for section in _sections()]
 
 
+def encoding_size() -> int:
+    """Return the feature width defined by the active encoder structure.
+
+    Consumers that construct neural networks must use this structural contract
+    rather than retain a width copied from an older checkpoint release.
+    """
+    return sum(section.size for section in _sections())
+
+
 def _sections() -> tuple[EncodingSection, ...]:
     offset = 0
     sections: list[EncodingSection] = []

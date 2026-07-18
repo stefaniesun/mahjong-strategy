@@ -1,6 +1,6 @@
 # S5 上云训练包
 
-本包冻结使用已验收的 `S4/v1_20260711_repaired_cuda` belief / policy
+本包冻结使用已验收的 `S4/v5_20260718_encoder_v4` belief / policy
 checkpoint，不包含体积较大的 S4 原始对局数据。
 
 ```bash
