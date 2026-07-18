@@ -1,5 +1,6 @@
 # Python caches and test state
 __pycache__/
+*.out
 *.py[cod]
 .pytest_cache/
 .coverage
@@ -13,7 +14,9 @@ venv/
 
 # Generated test and local training output
 pytest_*.out
+data_dagger*/
 cloud_outputs/**/data/*.jsonl
+cloud_outputs/*/data/
 
 # IDE and OS metadata
 .vscode/
