@@ -1,0 +1,203 @@
+{
+  "belief_history": [
+    {
+      "discard_danger_loss": 0.08087939809067861,
+      "elapsed_seconds": 119.62,
+      "epoch": 1,
+      "loss": 1.336465763356737,
+      "opponent_tenpai_loss": 0.3166044467708524,
+      "samples": 8062053,
+      "tile_location_loss": 0.9389819180379777
+    },
+    {
+      "discard_danger_loss": 0.0759704484059581,
+      "elapsed_seconds": 124.14,
+      "epoch": 2,
+      "loss": 1.2792855357774575,
+      "opponent_tenpai_loss": 0.2938889415370122,
+      "samples": 8062053,
+      "tile_location_loss": 0.9094261469381298
+    },
+    {
+      "discard_danger_loss": 0.07490476161007466,
+      "elapsed_seconds": 122.73,
+      "epoch": 3,
+      "loss": 1.2666800878742752,
+      "opponent_tenpai_loss": 0.28978716152784756,
+      "samples": 8062053,
+      "tile_location_loss": 0.9019881661800353
+    }
+  ],
+  "belief_metrics": {
+    "discard_danger_brier": 0.018243671857815065,
+    "discard_danger_count": 547578,
+    "discard_danger_ece": 0.0006710929589990064,
+    "opponent_tenpai_brier": 0.0910046540351646,
+    "opponent_tenpai_count": 60000,
+    "opponent_tenpai_ece": 0.006701634689699468,
+    "samples": 20000,
+    "tile_brier": 0.22075870275650514,
+    "tile_count": 489373,
+    "tile_log_loss": 0.9125191757511996
+  },
+  "checkpoints": {
+    "belief": "/root/autodl-tmp/s4_dagger2_train/checkpoints/belief_s4.pt",
+    "policy": "/root/autodl-tmp/s4_dagger2_train/checkpoints/policy_s4.pt"
+  },
+  "config": {
+    "batch_size": 512,
+    "belief_epochs": 3,
+    "cache_dir": null,
+    "data_dir": "data/shards",
+    "device": "auto",
+    "dropout": 0.05,
+    "eval_samples": 20000,
+    "extra_data_dirs": [
+      "/root/autodl-tmp/data_dagger1",
+      "/root/autodl-tmp/data_dagger2"
+    ],
+    "hidden_size": 256,
+    "inference_batch_size": 1024,
+    "learning_rate": 0.0003,
+    "manifest": "data/manifest.json",
+    "output_dir": "/root/autodl-tmp/s4_dagger2_train",
+    "pipeline": "cached",
+    "policy_epochs": 5,
+    "residual_blocks": 3,
+    "seed": 20260716,
+    "workers": 16
+  },
+  "data": {
+    "compressed_bytes": 2755201479,
+    "dataset_fingerprint": "6b5d91c71deb0fece24b89a8fadeb321539f02c96ea88323157ddc1088de8cf6",
+    "decision_records": 8958503,
+    "games": 90000
+  },
+  "execution": {
+    "device": "cuda",
+    "pipeline": "cached",
+    "torch_version": "2.3.0+cu121",
+    "workers": 16
+  },
+  "policy_history": [
+    {
+      "elapsed_seconds": 2850.84,
+      "epoch": 1,
+      "loss": 0.8222190404938722,
+      "samples": 8062053,
+      "top1_accuracy": 0.8653257427109448
+    },
+    {
+      "elapsed_seconds": 2839.42,
+      "epoch": 2,
+      "loss": 0.6679454453321029,
+      "samples": 8062053,
+      "top1_accuracy": 0.8926996634728152
+    },
+    {
+      "elapsed_seconds": 2837.46,
+      "epoch": 3,
+      "loss": 0.6087023914781038,
+      "samples": 8062053,
+      "top1_accuracy": 0.9016945187534738
+    },
+    {
+      "elapsed_seconds": 2840.67,
+      "epoch": 4,
+      "loss": 0.5631647759174292,
+      "samples": 8062053,
+      "top1_accuracy": 0.9085966068444353
+    },
+    {
+      "elapsed_seconds": 2841.02,
+      "epoch": 5,
+      "loss": 0.5211112799037877,
+      "samples": 8062053,
+      "top1_accuracy": 0.9153394302915151
+    }
+  ],
+  "policy_metrics": {
+    "by_action_kind": {
+      "declare_void": {
+        "accuracy": 0.9821428571428571,
+        "samples": 560
+      },
+      "discard": {
+        "accuracy": 0.7688896469384274,
+        "samples": 5863
+      },
+      "kong": {
+        "accuracy": 1.0,
+        "samples": 124
+      },
+      "pass": {
+        "accuracy": 0.9755577427821522,
+        "samples": 12192
+      },
+      "pong": {
+        "accuracy": 0.8874172185430463,
+        "samples": 302
+      },
+      "rob_kong_win": {
+        "accuracy": 1.0,
+        "samples": 1
+      },
+      "self_win": {
+        "accuracy": 1.0,
+        "samples": 124
+      },
+      "swap_three": {
+        "accuracy": 0.8660714285714286,
+        "samples": 560
+      },
+      "win": {
+        "accuracy": 1.0,
+        "samples": 274
+      }
+    },
+    "by_phase": {
+      "declare_void": {
+        "accuracy": 0.9821428571428571,
+        "samples": 560
+      },
+      "play": {
+        "accuracy": 0.910646186440678,
+        "samples": 18880
+      },
+      "swap_three": {
+        "accuracy": 0.8660714285714286,
+        "samples": 560
+      }
+    },
+    "forced_rate": 0.5874,
+    "forced_samples": 11748,
+    "illegal_argmax_count": 0,
+    "illegal_probability_mass": 0.0,
+    "non_forced_accuracy": 0.7852641783809986,
+    "non_forced_samples": 8252,
+    "pong_pass_response": {
+      "accuracy": 0.5921375921375921,
+      "samples": 814
+    },
+    "samples": 20000,
+    "top1_accuracy": 0.9113999605178833
+  },
+  "prior_belief_metrics": {
+    "discard_danger_brier": 0.019814528706412603,
+    "discard_danger_count": 547578,
+    "discard_danger_ece": 0.019814528706412603,
+    "opponent_tenpai_brier": 0.2263,
+    "opponent_tenpai_count": 60000,
+    "opponent_tenpai_ece": 0.2263,
+    "samples": 20000,
+    "tile_brier": 0.2754078761573093,
+    "tile_count": 489373,
+    "tile_log_loss": 1.068257617499844
+  },
+  "profile_mix": {
+    "heavy": 0.25,
+    "light_noise": 0.3,
+    "midgame": 0.35,
+    "perfect": 0.1
+  }
+}
