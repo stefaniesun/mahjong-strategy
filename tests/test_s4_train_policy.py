@@ -220,6 +220,55 @@ def test_learned_policy_loads_checkpoint_on_cpu_and_selects_legal_action(tmp_pat
     assert action_to_index(action_to_protocol(action)) == target_index
 
 
+def test_learned_policy_loads_checkpoint_with_weights_only(tmp_path, monkeypatch):
+    """Checkpoint paths are user-controlled and must not enable pickle execution."""
+    torch_module = torch()
+    from learning.models.policy_net import PolicyNet, PolicyNetConfig
+    from policies import learned_policy
+    from state.encoder import ENCODER_VERSION
+
+    model = PolicyNet(PolicyNetConfig(input_size=263, action_size=action_space_size(), hidden_size=16, residual_blocks=1))
+    checkpoint = tmp_path / "safe-policy.pt"
+    torch_module.save(
+        {
+            "model_config": model.config.__dict__,
+            "encoder_version": ENCODER_VERSION,
+            "state_dict": model.state_dict(),
+        },
+        checkpoint,
+    )
+    real_load = torch_module.load
+    calls = []
+
+    def spy_load(*args, **kwargs):
+        calls.append(kwargs)
+        return real_load(*args, **kwargs)
+
+    monkeypatch.setattr(learned_policy.torch, "load", spy_load)
+
+    learned_policy.LearnedPolicy(checkpoint)
+
+    assert calls == [{"map_location": "cpu", "weights_only": True}]
+
+
+def test_learned_policy_rejects_unsafe_or_malformed_checkpoint_with_value_error(tmp_path):
+    torch_module = torch()
+    from policies.learned_policy import LearnedPolicy
+
+    unsafe_checkpoint = tmp_path / "unsafe-policy.pt"
+    torch_module.save(_UnsafePolicyCheckpointPayload(), unsafe_checkpoint)
+    malformed_checkpoint = tmp_path / "malformed-policy.pt"
+    malformed_checkpoint.write_bytes(b"not a torch checkpoint")
+
+    for checkpoint in (unsafe_checkpoint, malformed_checkpoint):
+        with pytest.raises(ValueError, match="safe policy checkpoint"):
+            LearnedPolicy(checkpoint)
+
+
+class _UnsafePolicyCheckpointPayload:
+    pass
+
+
 @pytest.mark.parametrize(
     ("encoder_version", "input_size"),
     [("s2.v4.encoder.v2", 263), ("s2.v4.encoder.v3", 806)],

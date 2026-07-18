@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 
 import torch
@@ -18,7 +18,7 @@ from state.tile_belief import LearnedBelief, TileBelief, with_prior_beliefs
 
 class LearnedPolicy(BasePolicy):
     def __init__(self, model_path: str | Path, belief_model_path: str | Path | None = None) -> None:
-        checkpoint = torch.load(model_path, map_location="cpu")
+        checkpoint = _load_safe_policy_checkpoint(model_path)
 
         checkpoint_version = checkpoint.get("encoder_version")
         if checkpoint_version != ENCODER_VERSION:
@@ -26,17 +26,28 @@ class LearnedPolicy(BasePolicy):
                 f"checkpoint encoder version {checkpoint_version!r} is incompatible with {ENCODER_VERSION!r}"
             )
         config_data = checkpoint.get("model_config")
-        if config_data is None:
+        if not isinstance(config_data, Mapping):
             raise ValueError("checkpoint must include model_config")
-        config = PolicyNetConfig(**config_data)
+        try:
+            config = PolicyNetConfig(**config_data)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("checkpoint model_config is invalid") from exc
         if config.action_size != action_space_size():
             raise ValueError(
                 f"checkpoint action size {config.action_size} is incompatible with {action_space_size()}"
             )
+        state_dict = checkpoint.get("state_dict")
+        if not isinstance(state_dict, Mapping):
+            raise ValueError("checkpoint must include state_dict")
         self.model = PolicyNet(config)
-        self.model.load_state_dict(checkpoint["state_dict"])
+        try:
+            self.model.load_state_dict(state_dict)
+        except (RuntimeError, TypeError, ValueError) as exc:
+            raise ValueError("checkpoint state_dict is incompatible with model_config") from exc
         self.model.eval()
         belief_metadata = checkpoint.get("belief_metadata") or {}
+        if not isinstance(belief_metadata, Mapping):
+            raise ValueError("checkpoint belief_metadata must be a mapping")
         source = belief_metadata.get("source", "legacy")
         if source == "learned" and belief_model_path is None:
             raise ValueError("belief_model_path is required for a learned-belief policy checkpoint")
@@ -56,3 +67,14 @@ class LearnedPolicy(BasePolicy):
         with torch.no_grad():
             action_index = int(self.model(features, legal_mask=mask).logits.argmax(dim=-1).item())
         return action_from_protocol(index_to_action(action_index))
+
+
+def _load_safe_policy_checkpoint(model_path: str | Path) -> dict[str, object]:
+    """Load a tensor-only policy checkpoint from a caller-supplied path."""
+    try:
+        checkpoint = torch.load(model_path, map_location="cpu", weights_only=True)
+    except Exception as exc:
+        raise ValueError("could not load safe policy checkpoint") from exc
+    if not isinstance(checkpoint, dict):
+        raise ValueError("safe policy checkpoint must be a dictionary")
+    return checkpoint
