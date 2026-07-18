@@ -1,9 +1,13 @@
 from __future__ import annotations
 
+import argparse
 from collections import Counter
 from copy import deepcopy
 from dataclasses import dataclass, field
+import json
 from math import sqrt
+from pathlib import Path
+import sys
 from typing import Sequence
 
 
@@ -12,6 +16,8 @@ from engine.game import Game
 from engine.settlement import assert_zero_sum
 from policies.base_policy import BasePolicy
 from policies.decision_boundary import choose_policy_action
+from policies.learned_policy import LearnedPolicy
+from policies.rule_policy import RulePolicy
 
 
 
@@ -212,3 +218,77 @@ def _confidence95(values: Sequence[int]) -> float:
     mean = sum(values) / count
     variance = sum((value - mean) ** 2 for value in values) / (count - 1)
     return 1.96 * sqrt(variance / count)
+
+
+def _cli_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        description="Run a deterministic S4 policy arena against three rule-policy opponents."
+    )
+    parser.add_argument("--seed", type=int, required=True, help="first game seed")
+    parser.add_argument("--games", type=int, required=True, help="number of arena games (non-negative)")
+    parser.add_argument("--model-seat", type=int, required=True, choices=range(4), help="seat occupied by the S4 policy")
+    parser.add_argument(
+        "--policy-checkpoint",
+        type=Path,
+        required=True,
+        help="S4 policy checkpoint; learned-belief checkpoints use sibling belief_s4.pt",
+    )
+    parser.add_argument(
+        "--opponent",
+        action="append",
+        required=True,
+        choices=("rule",),
+        help="one opponent policy per non-model seat; only 'rule' is supported",
+    )
+    return parser
+
+
+def _cli_report(report: ArenaReport, *, seed: int, model_seat: int) -> dict[str, object]:
+    """Return the stable, compact JSON contract emitted by the arena command."""
+    return {
+        "seed": seed,
+        "games": report.games,
+        "model_seat": model_seat,
+        "unfinished": report.unfinished,
+        "illegal_actions": report.illegal_actions,
+        "zero_sum_violations": report.zero_sum_violations,
+        "draw_rate": report.draw_rate,
+        "win_rate_by_seat": report.win_rate_by_seat,
+        "average_scores": report.average_scores,
+        "score_confidence95": report.score_confidence95,
+    }
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    """Run the documented S4 gate command and emit one JSON report to stdout."""
+    args = _cli_parser().parse_args(argv)
+    if len(args.opponent) != 3:
+        _cli_parser().error("exactly three --opponent rule values are required")
+    if args.games < 0:
+        _cli_parser().error("--games must be non-negative")
+
+    try:
+        checkpoint = args.policy_checkpoint
+        if not checkpoint.is_file():
+            raise FileNotFoundError(f"policy checkpoint not found: {checkpoint}")
+        # Accepted S4 v5 policies use learned belief and record the paired
+        # artifact as a sibling.  Older prior-belief checkpoints remain valid
+        # because LearnedPolicy only requires this argument when applicable.
+        sibling_belief = checkpoint.with_name("belief_s4.pt")
+        model_policy = LearnedPolicy(
+            checkpoint,
+            belief_model_path=sibling_belief if sibling_belief.is_file() else None,
+        )
+        policies: list[BasePolicy] = [RulePolicy(), RulePolicy(), RulePolicy(), RulePolicy()]
+        policies[args.model_seat] = model_policy
+        report = run_arena(policies, ArenaConfig(games=args.games, seed=args.seed))
+    except Exception as exc:
+        print(json.dumps({"error": str(exc), "error_type": type(exc).__name__}, sort_keys=True), file=sys.stderr)
+        return 2
+
+    print(json.dumps(_cli_report(report, seed=args.seed, model_seat=args.model_seat), sort_keys=True))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
