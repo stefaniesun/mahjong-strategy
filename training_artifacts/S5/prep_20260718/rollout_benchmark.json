@@ -1,0 +1,13 @@
+{
+  "belief_sha256": "caa9775e65070e6196a2b020fc013783bbd818c54f763911286a0165915f3e01",
+  "completed_games": 50,
+  "cpu_logical_cores": 4,
+  "elapsed_seconds": 124.54492900002515,
+  "games_per_minute": 24.087692883902115,
+  "kind": "s5_local_v5_rollout_benchmark",
+  "os": "Windows-10-10.0.19045-SP0",
+  "policy_sha256": "3c23f0b7841298ff0cd9fd531a6f261fdb0a07436b08f9896bf32feb090fd8e2",
+  "python": "3.14.3",
+  "seed": 20260718,
+  "torch_threads": 2
+}

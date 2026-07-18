@@ -35,7 +35,7 @@ checkpoint 与报告链路可用。它不是正式训练，也不能作为棋力
 ```bash
 python -S tools/cloud_train_s5.py --mode train --device cuda \
   --updates 100 --episodes-per-update 32 --arena-games 32 \
-  --seed 20260715 --output-dir ../s5_cloud_outputs/s5_train
+  --seed 20260718 --output-dir ../s5_cloud_outputs/s5_v5_formal_20260718
 ```
 
 `train` 不使用伪造轨迹或固定胜率：每个 PPO 更新由完整 S1 对局经 S2

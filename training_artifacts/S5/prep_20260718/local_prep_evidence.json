@@ -1,0 +1,125 @@
+{
+  "completed_games": 50,
+  "effective_sampling_weights": {
+    "current": 0.5384615384615384,
+    "greedy": 0.07692307692307693,
+    "random": 0.07692307692307693,
+    "s3": 0.3076923076923077
+  },
+  "frozen_s4_provenance": {
+    "belief_sha256": "caa9775e65070e6196a2b020fc013783bbd818c54f763911286a0165915f3e01",
+    "cold_start_policy_version": "s4-v5-encoder-v4-cold-start",
+    "encoder_version": "s2.v4.encoder.v4",
+    "policy_sha256": "3c23f0b7841298ff0cd9fd531a6f261fdb0a07436b08f9896bf32feb090fd8e2",
+    "release": "S4/v5_20260718_encoder_v4"
+  },
+  "health": [
+    {
+      "entropy": 0.1306929737329483,
+      "global_step": 1,
+      "kl": 0.0,
+      "loss": 0.11730632930994034
+    },
+    {
+      "entropy": 0.14142386615276337,
+      "global_step": 2,
+      "kl": 0.00858158990740776,
+      "loss": 0.04443458095192909
+    },
+    {
+      "entropy": 0.15833880007266998,
+      "global_step": 3,
+      "kl": 0.031227288767695427,
+      "loss": 0.01888519525527954
+    },
+    {
+      "entropy": 0.1757904589176178,
+      "global_step": 4,
+      "kl": 0.06537612527608871,
+      "loss": 0.005735025275498629
+    },
+    {
+      "entropy": 0.19426488876342773,
+      "global_step": 5,
+      "kl": 0.10766773670911789,
+      "loss": -0.001237301155924797
+    },
+    {
+      "entropy": 0.2095852792263031,
+      "global_step": 6,
+      "kl": 0.14287661015987396,
+      "loss": -0.004886975046247244
+    },
+    {
+      "entropy": 0.2228986769914627,
+      "global_step": 7,
+      "kl": 0.1721409261226654,
+      "loss": -0.008239898830652237
+    },
+    {
+      "entropy": 0.23532328009605408,
+      "global_step": 8,
+      "kl": 0.20366965234279633,
+      "loss": -0.011994623579084873
+    },
+    {
+      "entropy": 0.24620917439460754,
+      "global_step": 9,
+      "kl": 0.23352938890457153,
+      "loss": -0.016431661322712898
+    },
+    {
+      "entropy": 0.2564278244972229,
+      "global_step": 10,
+      "kl": 0.2667903006076813,
+      "loss": -0.020294535905122757
+    }
+  ],
+  "illegal_actions": 0,
+  "kind": "bounded_local_s5_v5_preparation_smoke",
+  "learner_used_curriculum_degradation": true,
+  "opponents_used_perfect_observation": true,
+  "ppo_updates_after_resume": 5,
+  "ppo_updates_before_resume": 10,
+  "raw_decisions_written": false,
+  "resume_curve_matches": true,
+  "resume_health": [
+    {
+      "entropy": 0.26496151089668274,
+      "global_step": 11,
+      "kl": 0.3067782521247864,
+      "loss": -0.02174258604645729
+    },
+    {
+      "entropy": 0.27390724420547485,
+      "global_step": 12,
+      "kl": 0.33191078901290894,
+      "loss": -0.02172956056892872
+    },
+    {
+      "entropy": 0.27488604187965393,
+      "global_step": 13,
+      "kl": 0.3566265106201172,
+      "loss": -0.02292180061340332
+    },
+    {
+      "entropy": 0.2733917236328125,
+      "global_step": 14,
+      "kl": 0.35039666295051575,
+      "loss": -0.0242034699767828
+    },
+    {
+      "entropy": 0.2747040390968323,
+      "global_step": 15,
+      "kl": 0.3465449810028076,
+      "loss": -0.025477558374404907
+    }
+  ],
+  "rollout_elapsed_seconds": 124.54492900002515,
+  "rollout_games_per_minute": 24.087692883902115,
+  "seed": 20260718,
+  "trajectory_steps": 2205,
+  "v5_snapshot_in_league": true,
+  "warning": "Not formal S5 training and not a playing-strength result.",
+  "zero_sum_failures": 0
+}

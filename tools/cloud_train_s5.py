@@ -10,12 +10,16 @@ itself.
 from __future__ import annotations
 
 import argparse
+import copy
 import hashlib
 import json
+import math
 import os
+import platform
 import sys
 import sysconfig
 import tempfile
+import time
 import zipfile
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -77,6 +81,36 @@ class S5CloudTrainingResult:
     checkpoint_path: Path
     device: str
     global_step: int
+
+
+@dataclass(frozen=True, slots=True)
+class S5LocalPrepSmokeResult:
+    """Evidence emitted by the bounded, real v5 local preparation smoke.
+
+    This is intentionally separate from the tiny cloud ``smoke`` mode: it
+    uses complete S1 games and real frozen v5 S4 assets, but has a fixed small
+    budget and is never a formal S5 training or playing-strength claim.
+    """
+
+    output_dir: Path
+    completed_games: int
+    trajectory_steps: int
+    illegal_actions: int
+    zero_sum_failures: int
+    ppo_updates: int
+    resume_updates: int
+    losses: tuple[float, ...]
+    entropies: tuple[float, ...]
+    kls: tuple[float, ...]
+    resume_curve_matches: bool
+    v5_snapshot_in_league: bool
+    effective_sampling_weights: dict[str, float]
+    opponents_used_perfect_observation: bool
+    learner_used_curriculum_degradation: bool
+    checkpoint_path: Path
+    evidence_path: Path
+    benchmark_path: Path
+    artifact_paths: tuple[Path, ...]
 
 
 def _sha256(path: Path) -> str:
@@ -471,6 +505,428 @@ def _require_package_output_outside_root(root: Path, output_dir: Path) -> None:
     except ValueError:
         return
     raise ValueError("package runtime output directory must be outside package root")
+
+
+def _validate_prep_trajectory(steps, *, feature_size: int, action_size: int) -> None:
+    """Reject incomplete or non-portable learner trajectory evidence early."""
+    if not steps:
+        raise RuntimeError("completed v5 rollout recorded no learner trajectory")
+    for index, step in enumerate(steps):
+        if len(step.feature_values) != feature_size or len(step.legal_mask) != action_size:
+            raise RuntimeError("v5 rollout trajectory schema does not match the loaded policy")
+        if not 0 <= step.action < action_size or not step.legal_mask[step.action]:
+            raise RuntimeError("v5 rollout trajectory contains an illegal action")
+        if not all(math.isfinite(float(value)) for value in (*step.feature_values, step.old_log_prob, step.value, step.reward)):
+            raise RuntimeError("v5 rollout trajectory contains non-finite values")
+        terminal = index == len(steps) - 1
+        if step.done != terminal or (not terminal and step.reward != 0.0):
+            raise RuntimeError("v5 rollout trajectory violates terminal-reward schema")
+
+
+def _write_local_prep_benchmark(
+    path: Path,
+    *,
+    root: Path,
+    games: int,
+    elapsed_seconds: float,
+    seed: int,
+    torch_threads: int,
+) -> None:
+    """Write the measured, bounded rollout ledger without retaining decisions."""
+    rate = games / elapsed_seconds * 60.0 if elapsed_seconds > 0.0 else 0.0
+    content = (
+        "# S5 Local v5 Rollout Benchmark\n\n"
+        "This is bounded pre-training evidence, not formal S5 training or a strength result.\n\n"
+        f"- Command: `python -c \"from tools.cloud_train_s5 import run_local_v5_prep_smoke; run_local_v5_prep_smoke()\"`\n"
+        f"- Seed: `{seed}`\n"
+        f"- Completed real S1 rollouts: `{games}`\n"
+        f"- Rollout elapsed seconds: `{elapsed_seconds:.3f}`\n"
+        f"- Throughput: `{rate:.3f}` games/minute\n"
+        f"- OS: `{platform.platform()}`\n"
+        f"- CPU logical cores: `{os.cpu_count()}`\n"
+        f"- Python: `{sys.version.split()[0]}`\n"
+        f"- PyTorch threads: `{torch_threads}`\n"
+        f"- v5 belief SHA256: `{_sha256(root / S4_BELIEF)}`\n"
+        f"- v5 policy SHA256: `{_sha256(root / S4_POLICY)}`\n"
+    )
+    _atomic_write_json(path.with_suffix(".json"), {
+        "kind": "s5_local_v5_rollout_benchmark",
+        "seed": seed,
+        "completed_games": games,
+        "elapsed_seconds": elapsed_seconds,
+        "games_per_minute": rate,
+        "os": platform.platform(),
+        "cpu_logical_cores": os.cpu_count(),
+        "python": sys.version.split()[0],
+        "torch_threads": torch_threads,
+        "policy_sha256": _sha256(root / S4_POLICY),
+        "belief_sha256": _sha256(root / S4_BELIEF),
+    })
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_suffix(path.suffix + ".tmp")
+    temporary.write_text(content, encoding="utf-8")
+    os.replace(temporary, path)
+
+
+def run_local_v5_prep_smoke(
+    *,
+    output_dir: Path | None = None,
+    games: int = 50,
+    updates: int = 10,
+    seed: int = 20260718,
+    project_root: Path = PROJECT_ROOT,
+) -> S5LocalPrepSmokeResult:
+    """Run the required bounded, real-v5 local preparation validation.
+
+    The only persisted records are aggregate evidence, health curves and a
+    resumable checkpoint.  In particular, per-decision observations/actions
+    are never serialized, so this cannot accidentally become a raw training
+    data archive.
+    """
+    if not isinstance(games, int) or isinstance(games, bool) or games < 50:
+        raise ValueError("local v5 preparation smoke requires at least 50 completed games")
+    if not isinstance(updates, int) or isinstance(updates, bool) or updates < 10:
+        raise ValueError("local v5 preparation smoke requires at least 10 PPO updates")
+    if not isinstance(seed, int) or isinstance(seed, bool) or seed < 0:
+        raise ValueError("seed must be a non-negative integer")
+
+    import torch
+
+    from policies.opponent_pool import GreedyPolicy, RandomPolicy
+    from policies.rule_policy import RulePolicy
+    from rl.checkpoints import load_checkpoint, save_checkpoint
+    from rl.curriculum import CurriculumConfig, CurriculumStage, DegradationProfile, ObservationCurriculum
+    from rl.league import OpponentLeague, SnapshotMetadata
+    from rl.ppo_trainer import PPOConfig, ppo_update
+    from rl.rollout import FrozenBeliefProvider, LearnerDecision, RolloutConfig, run_rollout_game
+    from rl.train_rl import _batch_from_steps, _default_model, _frozen_reference_policy
+    from state.observation_degradation import DegradationPipeline, VisionNoise
+
+    root = Path(project_root).resolve()
+    _verify_s4_archive(root)
+    destination = (root / "training_artifacts" / "S5" / "prep_20260718") if output_dir is None else Path(output_dir)
+    destination = destination.resolve()
+    destination.mkdir(parents=True, exist_ok=True)
+    checkpoints = destination / "checkpoints"
+    evidence_path = destination / "local_prep_evidence.json"
+    benchmark_path = destination / "rollout_benchmark.md"
+
+    # Use exactly the accepted v5 policy architecture/weights for both learner
+    # cold start and frozen KL reference.  ``_default_model`` validates the
+    # current encoder contract before loading it.
+    from rl.train_rl import S5TrainingConfig
+
+    provenance = {
+        "release": S4_RELEASE,
+        "encoder_version": "s2.v4.encoder.v4",
+        "cold_start_policy_version": S4_V5_COLD_START_POLICY_VERSION,
+        "policy_sha256": _sha256(root / S4_POLICY),
+        "belief_sha256": _sha256(root / S4_BELIEF),
+    }
+    model_config = S5TrainingConfig(
+        output_dir=destination,
+        frozen_s4_belief_path=root / S4_BELIEF,
+        frozen_s4_policy_path=root / S4_POLICY,
+        frozen_s4_provenance=provenance,
+        updates=updates,
+        rollout_seed_start=seed,
+        device="cpu",
+    )
+    torch.manual_seed(seed)
+    learner_model = _default_model(model_config).cpu()
+    reference_model = _frozen_reference_policy(learner_model).cpu()
+    belief_provider = FrozenBeliefProvider.from_checkpoint(str(root / S4_BELIEF))
+    optimizer = torch.optim.Adam(learner_model.parameters(), lr=model_config.learning_rate)
+    ppo_config = PPOConfig(kl_coef=0.05)
+
+    profile = DegradationProfile("prep_light_noise", vision_miss_rate=0.03, mid_game_ratio=0.0)
+    curriculum = ObservationCurriculum(CurriculumConfig((
+        CurriculumStage("prep_light_noise", profile, 1.0, 1.0),
+    )))
+    current = SnapshotMetadata(
+        snapshot_id=S4_V5_COLD_START_POLICY_VERSION,
+        policy_version=S4_V5_COLD_START_POLICY_VERSION,
+        checkpoint_path=str(root / S4_POLICY),
+        training_step=0,
+        checksum=_sha256(root / S4_POLICY),
+    )
+    league = OpponentLeague(current_policy=current)
+    opponents = (RulePolicy(), GreedyPolicy(), RandomPolicy(seed=seed ^ 0xA5A5))
+    degradation_calls = 0
+
+    def learner_degrader(state, degradation_seed: int):
+        nonlocal degradation_calls
+        degradation_calls += 1
+        return DegradationPipeline([VisionNoise(miss_rate=profile.vision_miss_rate, seed=degradation_seed)]).apply(state)
+
+    def learner_decider(view):
+        learner_model.eval()
+        with torch.no_grad():
+            output = learner_model(
+                torch.tensor([view.feature_values], dtype=torch.float32),
+                torch.tensor([view.legal_mask], dtype=torch.bool),
+            )
+            probabilities = torch.softmax(output.action_logits[0], dim=-1)
+            generator = torch.Generator(device="cpu").manual_seed(_torch_sampling_seed(view.decision_seed))
+            action = int(torch.multinomial(probabilities, 1, generator=generator).item())
+            return LearnerDecision(action, float(torch.log(probabilities[action]).item()), float(output.values[0].item()))
+
+    all_steps = []
+    illegal_actions = 0
+    zero_sum_failures = 0
+    rollout_started = time.perf_counter()
+    for game_index in range(games):
+        result = run_rollout_game(
+            learner_decider,
+            opponents,
+            config=RolloutConfig(
+                seed=seed + game_index,
+                learner_rng_seed=(seed << 16) + game_index,
+                learner_seat=game_index % 4,
+                max_steps=1000,
+                observation_noise=profile.vision_miss_rate,
+            ),
+            policy_version=S4_V5_COLD_START_POLICY_VERSION,
+            belief_provider=belief_provider,
+            observation_degrader=learner_degrader,
+        )
+        _validate_prep_trajectory(
+            result.steps,
+            feature_size=learner_model.config.input_size,
+            action_size=learner_model.config.action_size,
+        )
+        illegal_actions += int(result.illegal_action)
+        zero_sum_failures += int(sum(result.scores) != 0)
+        all_steps.extend(result.steps)
+    rollout_elapsed = time.perf_counter() - rollout_started
+    if illegal_actions or zero_sum_failures:
+        raise RuntimeError("v5 local preparation rollout invariants failed")
+
+    batch = _batch_from_steps(tuple(all_steps), reference_model)
+
+    # Resume evidence must compare two *identical* PPO executions.  Keep all
+    # captured inputs in memory only: the published artefact remains aggregate
+    # evidence and never becomes a decision-level training-data archive.
+    initial_model_state = copy.deepcopy(learner_model.state_dict())
+    initial_batch_tensors = {
+        name: getattr(batch, name).detach().clone()
+        for name in (
+            "features", "legal_mask", "actions", "old_log_probs", "old_values",
+            "rewards", "dones", "reference_logits",
+        )
+    }
+
+    def exact_state_matches(left: object, right: object) -> bool:
+        if isinstance(left, torch.Tensor):
+            return (
+                isinstance(right, torch.Tensor)
+                and left.dtype == right.dtype
+                and left.shape == right.shape
+                and torch.equal(left, right)
+            )
+        if isinstance(left, dict):
+            return isinstance(right, dict) and left.keys() == right.keys() and all(
+                exact_state_matches(value, right[name]) for name, value in left.items()
+            )
+        if isinstance(left, (list, tuple)):
+            return type(left) is type(right) and len(left) == len(right) and all(
+                exact_state_matches(value, other) for value, other in zip(left, right)
+            )
+        return type(left) is type(right) and left == right
+
+    def make_comparison_model():
+        candidate = _default_model(model_config).cpu()
+        candidate.load_state_dict(initial_model_state)
+        return candidate
+
+    # Construct both paths from cloned, validated cold-start state.  The frozen
+    # references are retained as explicit evidence that the same S4 policy
+    # produced the immutable KL targets in both paths.
+    uninterrupted_model = make_comparison_model()
+    split_model = make_comparison_model()
+    uninterrupted_reference = _frozen_reference_policy(uninterrupted_model).cpu()
+    split_reference = _frozen_reference_policy(split_model).cpu()
+    uninterrupted_optimizer = torch.optim.Adam(uninterrupted_model.parameters(), lr=model_config.learning_rate)
+    split_optimizer = torch.optim.Adam(split_model.parameters(), lr=model_config.learning_rate)
+    same_initial_model_state = exact_state_matches(uninterrupted_model.state_dict(), split_model.state_dict())
+    same_initial_optimizer_state = exact_state_matches(
+        uninterrupted_optimizer.state_dict(), split_optimizer.state_dict()
+    )
+    same_reference_policy_state = (
+        exact_state_matches(reference_model.state_dict(), uninterrupted_reference.state_dict())
+        and exact_state_matches(uninterrupted_reference.state_dict(), split_reference.state_dict())
+    )
+
+    def validate_health(health, *, phase: str) -> None:
+        values = (health.total_loss, health.policy_loss, health.value_loss, health.entropy, health.kl, health.grad_norm)
+        if not all(math.isfinite(value) for value in values) or health.entropy <= 0.0 or health.kl < 0.0:
+            raise RuntimeError(f"{phase} v5 local preparation PPO health is non-finite or unreasonable")
+
+    # Run the uninterrupted control all the way to 15 updates with the same
+    # batch and explicit seed as the split/resume path below.
+    comparison_seed = seed ^ 0x5A17
+    torch.manual_seed(comparison_seed)
+    health_rows = []
+    uninterrupted_health = []
+    for step in range(1, updates + 6):
+        health = ppo_update(uninterrupted_model, batch, uninterrupted_optimizer, ppo_config)
+        validate_health(health, phase="uninterrupted")
+        uninterrupted_health.append(health)
+        if step <= updates:
+            health_rows.append({"global_step": step, "loss": health.total_loss, "entropy": health.entropy, "kl": health.kl})
+
+    # The split path deliberately repeats the same first ten update inputs and
+    # seed, then serializes the complete optimizer state for a true resume.
+    torch.manual_seed(comparison_seed)
+    split_health = []
+    for _step in range(1, updates + 1):
+        health = ppo_update(split_model, batch, split_optimizer, ppo_config)
+        validate_health(health, phase="pre-checkpoint")
+        split_health.append(health)
+
+    checkpoint_path = checkpoints / f"v5-prep-step-{updates}.pt"
+    save_checkpoint(
+        checkpoint_path,
+        model=split_model,
+        optimizer=split_optimizer,
+        global_step=updates,
+        next_rollout_seed=seed + games,
+        league=league,
+        curriculum=curriculum,
+        config={"kind": "bounded_local_v5_prep", "games": games, "updates": updates},
+        metrics={"health": health_rows},
+        frozen_s4_provenance=provenance,
+    )
+
+    resumed_model = _default_model(model_config).cpu()
+    resumed_optimizer = torch.optim.Adam(resumed_model.parameters(), lr=model_config.learning_rate)
+    restored = load_checkpoint(checkpoint_path, model=resumed_model, optimizer=resumed_optimizer, map_location="cpu")
+    resume_health = []
+    resumed_health = []
+    for offset in range(1, 6):
+        health = ppo_update(resumed_model, batch, resumed_optimizer, ppo_config)
+        validate_health(health, phase="resumed")
+        resumed_health.append(health)
+        global_step = restored.global_step + offset
+        resume_health.append({"global_step": global_step, "loss": health.total_loss, "entropy": health.entropy, "kl": health.kl})
+    same_update_inputs = all(
+        torch.equal(getattr(batch, name), expected)
+        for name, expected in initial_batch_tensors.items()
+    )
+    model_state_matches = exact_state_matches(uninterrupted_model.state_dict(), resumed_model.state_dict())
+    optimizer_state_matches = exact_state_matches(
+        uninterrupted_optimizer.state_dict(), resumed_optimizer.state_dict()
+    )
+    pre_checkpoint_health_matches = all(
+        exact_state_matches(asdict(control), asdict(split))
+        for control, split in zip(uninterrupted_health[:updates], split_health)
+    )
+    resume_health_matches = all(
+        exact_state_matches(asdict(control), asdict(resumed))
+        for control, resumed in zip(uninterrupted_health[updates:], resumed_health)
+    )
+    resume_equivalence = {
+        "comparison_seed": comparison_seed,
+        "uninterrupted_updates": updates + 5,
+        "split_updates_before_checkpoint": updates,
+        "split_updates_after_resume": 5,
+        "same_initial_model_state": same_initial_model_state,
+        "same_initial_optimizer_state": same_initial_optimizer_state,
+        "same_reference_policy_state": same_reference_policy_state,
+        "same_update_inputs": same_update_inputs,
+        "pre_checkpoint_health_matches": pre_checkpoint_health_matches,
+        "resume_health_matches": resume_health_matches,
+        "model_state_matches": model_state_matches,
+        "optimizer_state_matches": optimizer_state_matches,
+        "strict_tolerance": 0.0,
+    }
+    resume_curve_matches = (
+        restored.global_step == updates
+        and restored.next_rollout_seed == seed + games
+        and all(
+            resume_equivalence[name]
+            for name in (
+                "same_initial_model_state",
+                "same_initial_optimizer_state",
+                "same_reference_policy_state",
+                "same_update_inputs",
+                "pre_checkpoint_health_matches",
+                "resume_health_matches",
+                "model_state_matches",
+                "optimizer_state_matches",
+            )
+        )
+    )
+    if not resume_curve_matches:
+        raise RuntimeError("v5 preparation checkpoint does not reproduce the uninterrupted PPO state")
+
+    # With no historical snapshots, configured history mass is intentionally
+    # unavailable; record the normalized effective distribution used now.
+    weights = {
+        "current": league.config.latest_weight,
+        "s3": league.config.s3_weight,
+        "greedy": league.config.greedy_random_weight / 2.0,
+        "random": league.config.greedy_random_weight / 2.0,
+    }
+    total_weight = sum(weights.values())
+    effective_weights = {key: value / total_weight for key, value in weights.items()}
+    sampled = league.sample(3, seed=seed)
+    v5_snapshot_in_league = (
+        league.current_entry.snapshot == current
+        and current.checkpoint_path == str(root / S4_POLICY)
+        and all(weight > 0.0 for weight in effective_weights.values())
+        and len(sampled) == 3
+    )
+    opponents_used_perfect_observation = (
+        curriculum.opponent_profile.is_perfect
+        and all(not hasattr(opponent, "degradation") for opponent in opponents)
+    )
+    learner_used_curriculum_degradation = degradation_calls > 0 and not curriculum.learner_profile.is_perfect
+    if not v5_snapshot_in_league or not opponents_used_perfect_observation or not learner_used_curriculum_degradation:
+        raise RuntimeError("v5 local preparation league or observation-isolation check failed")
+
+    _write_local_prep_benchmark(
+        benchmark_path,
+        root=root,
+        games=games,
+        elapsed_seconds=rollout_elapsed,
+        seed=seed,
+        torch_threads=torch.get_num_threads(),
+    )
+    evidence = {
+        "kind": "bounded_local_s5_v5_preparation_smoke",
+        "warning": "Not formal S5 training and not a playing-strength result.",
+        "seed": seed,
+        "completed_games": games,
+        "trajectory_steps": len(all_steps),
+        "illegal_actions": illegal_actions,
+        "zero_sum_failures": zero_sum_failures,
+        "ppo_updates_before_resume": updates,
+        "ppo_updates_after_resume": 5,
+        "resume_curve_matches": resume_curve_matches,
+        "resume_equivalence": resume_equivalence,
+        "v5_snapshot_in_league": v5_snapshot_in_league,
+        "effective_sampling_weights": effective_weights,
+        "opponents_used_perfect_observation": opponents_used_perfect_observation,
+        "learner_used_curriculum_degradation": learner_used_curriculum_degradation,
+        "rollout_elapsed_seconds": rollout_elapsed,
+        "rollout_games_per_minute": games / rollout_elapsed * 60.0 if rollout_elapsed > 0.0 else 0.0,
+        "health": health_rows,
+        "resume_health": resume_health,
+        "frozen_s4_provenance": provenance,
+        "raw_decisions_written": False,
+    }
+    _atomic_write_json(evidence_path, evidence)
+    artifacts = (checkpoint_path, evidence_path, benchmark_path, benchmark_path.with_suffix(".json"))
+    return S5LocalPrepSmokeResult(
+        destination, games, len(all_steps), illegal_actions, zero_sum_failures, updates, 5,
+        tuple(row["loss"] for row in health_rows),
+        tuple(row["entropy"] for row in health_rows),
+        tuple(row["kl"] for row in health_rows),
+        resume_curve_matches, v5_snapshot_in_league, effective_weights,
+        opponents_used_perfect_observation, learner_used_curriculum_degradation,
+        checkpoint_path, evidence_path, benchmark_path, artifacts,
+    )
 
 
 def run_s5_cloud_training(config: S5CloudRunConfig, *, project_root: Path = PROJECT_ROOT) -> S5CloudTrainingResult:
