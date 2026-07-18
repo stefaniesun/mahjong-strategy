@@ -162,7 +162,10 @@ def _standard_shanten(counts: tuple[int, ...], fixed_melds: int) -> int:
     return best
 
 
-@lru_cache(maxsize=None)
+# 注意:键是完整 27 维手牌计数,域无上界——必须设 maxsize。
+# maxsize=None 曾在 v4 编码器(每条记录 ~28 次向听计算)的海量去重手牌下
+# 把训练 worker 的内存撑到 5-6GB/进程,拖瘫整个缓存构建。LRU 淘汰不改变任何输出。
+@lru_cache(maxsize=1 << 18)
 def _best_blocks(counts: tuple[int, ...]) -> tuple[int, int]:
     best = (0, 0)
     for start in (0, 9, 18):
