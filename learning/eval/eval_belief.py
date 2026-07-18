@@ -63,6 +63,20 @@ def evaluate_belief_model_by_phase(model: BeliefNet, samples: Sequence[BeliefSam
 
 def evaluate_prior_belief_records(records: Sequence[DecisionRecord], config: DatasetBuildConfig) -> BeliefEvalReport:
     samples = [build_belief_sample(record, config) for record in records]
+    return evaluate_prior_belief_samples(records, samples, config)
+
+
+def evaluate_prior_belief_samples(
+    records: Sequence[DecisionRecord], samples: Sequence[BeliefSample], config: DatasetBuildConfig
+) -> BeliefEvalReport:
+    """Evaluate the prior against caller-built samples without rebuilding encodings.
+
+    The prior still receives the same deterministically degraded protocol state
+    as the legacy evaluator.  Reusing ``samples`` avoids a second expensive
+    ``build_belief_sample`` pass when the model report has already used them.
+    """
+    if len(records) != len(samples):
+        raise ValueError("records and samples must have the same length")
     if not samples:
         raise ValueError("records must not be empty")
     prior_predictions: list[list[list[float]]] = []
