@@ -1,0 +1,33 @@
+project_root: ..
+training:
+  python: python
+  script: tools/cloud_train_s5.py
+  output_dir: training_artifacts/S5/local_console
+  updates: 100
+  episodes_per_update: 32
+  arena_games: 100
+  seed: 20260721
+  device: auto
+  max_game_steps: 4000
+health:
+  poll_seconds: 10
+  agent_cpu_pause_c: 85
+  agent_disk_pause_gib: 10
+  evaluator_cpu_pause_c: 90
+  evaluator_cpu_resume_c: 80
+  retention_hours: 24
+evaluation:
+  quick_games: 100
+  formal_games: 500
+  formal_seed: 90000
+  poll_seconds: 30
+  keep_checkpoints: 20
+agent:
+  host: 127.0.0.1
+  port: 8765
+  state_dir: .console/agent-a
+server:
+  host: 127.0.0.1
+  port: 8766
+  agent_url: http://127.0.0.1:8765
+  state_dir: .console/server-b
