@@ -13,6 +13,8 @@ venv/
 .env.*
 
 # Generated test and local training output
+.console/
+configs/s5_console.local.yaml
 pytest_*.out
 data_dagger*/
 cloud_outputs/**/data/*.jsonl
