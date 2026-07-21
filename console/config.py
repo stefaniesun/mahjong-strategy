@@ -48,6 +48,9 @@ class EvaluationConfig:
     formal_seed: int = 90000
     poll_seconds: float = 30.0
     keep_checkpoints: int = 20
+    min_disk_free_gib: float = 10.0
+    s4_policy_path: str = "training_artifacts/S4/v5_20260718_encoder_v4/checkpoints/policy_s4.pt"
+    s4_belief_path: str = "training_artifacts/S4/v5_20260718_encoder_v4/checkpoints/belief_s4.pt"
 
 
 @dataclass(frozen=True, slots=True)
@@ -171,12 +174,16 @@ def load_config(path: Path) -> ConsoleConfig:
         ("keep_checkpoints", result.evaluation.keep_checkpoints),
     ):
         _positive_int(name, value)
+    _finite_number("evaluation.poll_seconds", result.evaluation.poll_seconds)
+    _finite_number("evaluation.min_disk_free_gib", result.evaluation.min_disk_free_gib)
     for name, endpoint in (("agent", result.agent), ("server", result.server)):
         if not isinstance(endpoint.host, str) or not endpoint.host.strip():
             raise ValueError(f"{name}.host must be a nonempty string")
         if not isinstance(endpoint.port, int) or isinstance(endpoint.port, bool) or not 1 <= endpoint.port <= 65535:
             raise ValueError(f"{name}.port must be between 1 and 65535")
     result.resolve_path(result.training.script)
+    result.resolve_path(result.evaluation.s4_policy_path)
+    result.resolve_path(result.evaluation.s4_belief_path)
     result.output_dir
     result.agent_state_dir
     result.server_state_dir
