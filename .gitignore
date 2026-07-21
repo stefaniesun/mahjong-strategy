@@ -18,6 +18,9 @@ data_dagger*/
 cloud_outputs/**/data/*.jsonl
 cloud_outputs/*/data/
 
+# Git worktrees
+.worktrees/
+
 # IDE and OS metadata
 .vscode/
 .idea/
