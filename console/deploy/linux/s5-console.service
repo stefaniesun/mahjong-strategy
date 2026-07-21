@@ -1,0 +1,18 @@
+[Unit]
+Description=S5 Local Training Console B
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=s5console
+EnvironmentFile=/etc/s5-console.env
+WorkingDirectory=${S5_PROJECT_ROOT}
+ExecStart=${S5_PYTHON} -m console.run_server_b --config ${S5_CONFIG}
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
