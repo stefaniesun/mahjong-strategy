@@ -6,9 +6,8 @@ Wants=network-online.target
 [Service]
 Type=simple
 User=s5console
-EnvironmentFile=/etc/s5-console.env
-WorkingDirectory=${S5_PROJECT_ROOT}
-ExecStart=${S5_PYTHON} -m console.run_server_b --config ${S5_CONFIG}
+WorkingDirectory=/opt/sichuan-mahjong-engine
+ExecStart=/opt/sichuan-mahjong-engine/.venv/bin/python -m console.run_server_b --config /etc/s5-console.yaml
 Restart=on-failure
 RestartSec=5
 NoNewPrivileges=true

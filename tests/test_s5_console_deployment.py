@@ -11,7 +11,8 @@ def test_deployment_templates_reference_real_entries_and_never_auto_train() -> N
     example = (root / "configs/s5_console.example.yaml").read_text(encoding="utf-8")
     page = (root / "console/static/index.html").read_text(encoding="utf-8")
     assert "console.run_agent_a" in windows
-    assert "console.run_server_b" in service
+    assert "ExecStart=/opt/sichuan-mahjong-engine/.venv/bin/python -m console.run_server_b --config /etc/s5-console.yaml" in service
+    assert "${" not in service
     assert "cloud_train_s5" not in windows + task + service
     assert "127.0.0.1" in example
     assert "cdn" not in page.lower()

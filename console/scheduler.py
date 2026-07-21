@@ -53,6 +53,14 @@ class EvaluationScheduler:
         self.state_dir.mkdir(parents=True, exist_ok=True)
         self.archive.mkdir(parents=True, exist_ok=True)
         self.thermal_paused = False
+        self._active_checkpoints: set[Path] = set()
+
+    def event(self, level: str, message: str, **details: object) -> None:
+        append_jsonl(self.events, {
+            "timestamp": datetime.now(timezone.utc).isoformat(), "level": level,
+            "message": message, **details,
+        })
+
 
     def completed_ids(self) -> set[str]:
         return {str(row["task_id"]) for row in read_jsonl(self.evals) if "task_id" in row}
@@ -98,6 +106,7 @@ class EvaluationScheduler:
                     if temp.stat().st_size != size or sha256_file(temp) != checksum:
                         raise ValueError("downloaded checkpoint verification failed")
                     os.replace(temp, target)
+                    self.event("info", "checkpoint_synced", checkpoint=checksum, remote_name=row.get("name"))
                 finally:
                     temp.unlink(missing_ok=True)
             catalog[checksum] = {
@@ -115,7 +124,18 @@ class EvaluationScheduler:
             key=lambda path: float(catalog.get(path.stem, {}).get("mtime", 0)) if isinstance(catalog.get(path.stem), dict) else 0,
             reverse=True,
         )
-        for path in files[self.config.evaluation.keep_checkpoints:]:
+        milestone_days: set[str] = set()
+        retained: set[Path] = set(files[:self.config.evaluation.keep_checkpoints]) | self._active_checkpoints
+        for path in files:
+            item = catalog.get(path.stem, {})
+            timestamp = float(item.get("mtime", 0)) if isinstance(item, dict) else 0
+            day = datetime.fromtimestamp(timestamp, timezone.utc).date().isoformat()
+            if day not in milestone_days:
+                retained.add(path)
+                milestone_days.add(day)
+        for path in files:
+            if path in retained:
+                continue
             path.unlink(missing_ok=True)
             catalog.pop(path.stem, None)
         atomic_write_json(self.catalog, catalog)
@@ -149,11 +169,33 @@ class EvaluationScheduler:
         if not tasks:
             return None
         checkpoint, kind, games, seed, task_id = tasks[0]
-        result = self.evaluator(
-            checkpoint, games=games, seed=seed, kind=kind,
-            s4_policy_path=self.config.resolve_path(self.config.evaluation.s4_policy_path),
-            s4_belief_path=self.config.resolve_path(self.config.evaluation.s4_belief_path),
-        )
+        self._active_checkpoints.add(checkpoint)
+        self.event("info", "evaluation_started", checkpoint=checkpoint.stem, kind=kind)
+        last_sample_at = 0.0
+        def progress(_completed: int, _total: int) -> None:
+            nonlocal last_sample_at
+            now = datetime.now(timezone.utc).timestamp()
+            if now - last_sample_at < self.config.health.poll_seconds:
+                return
+            last_sample_at = now
+            health = self.telemetry_collector(self.state_dir)
+            record_telemetry(self.telemetry, health, self.config.health.retention_hours)
+            was_paused = self.thermal_paused
+            self.thermal_paused = evaluator_paused(health, self.config.health, self.thermal_paused)
+            if self.thermal_paused and not was_paused:
+                self.event("warning", "evaluation_overheat", cpu_temp_c=health.cpu_temp_c)
+            if self.thermal_paused:
+                raise RuntimeError("evaluation interrupted by CPU overheat")
+        try:
+            result = self.evaluator(
+                checkpoint, games=games, seed=seed, kind=kind,
+                s4_policy_path=self.config.resolve_path(self.config.evaluation.s4_policy_path),
+                s4_belief_path=self.config.resolve_path(self.config.evaluation.s4_belief_path),
+                progress_callback=progress,
+            )
+        finally:
+            self._active_checkpoints.discard(checkpoint)
         result.update(task_id=task_id, timestamp=datetime.now(timezone.utc).isoformat())
         append_jsonl(self.evals, result)
+        self.event("info", "evaluation_completed", checkpoint=checkpoint.stem, kind=kind, task_id=task_id)
         return result

@@ -75,6 +75,7 @@ class AgentManager:
         self._lock = threading.RLock()
         self._stop_health = threading.Event()
         self._generation = 0
+        self._adopted_pid: int | None = None
         self.process: subprocess.Popen | None = None
         self.state_dir.mkdir(parents=True, exist_ok=True)
         try:
@@ -89,9 +90,12 @@ class AgentManager:
         if status in {"RUNNING", "PAUSING"} and isinstance(pid, int) and isinstance(command, list):
             actual = self.pid_command(pid)
             expected = str(self.config.resolve_path(self.config.training.script)).lower()
-            if actual and expected in actual.lower():
+            saved_command = " ".join(str(part) for part in command).lower()
+            if actual and expected in actual.lower() and all(token in actual.lower() for token in ("--output-dir", str(self.output).lower())) and expected in saved_command:
                 self.state["status"] = status
+                self._adopted_pid = pid
                 self._save()
+                threading.Thread(target=self._monitor_adopted, args=(pid,), daemon=True).start()
                 return
         self.state = {"status": "PAUSED" if self.latest_checkpoint().exists() else "IDLE"}
         self._save()
@@ -103,7 +107,19 @@ class AgentManager:
     def latest_checkpoint(self) -> Path:
         return self.output / "checkpoints" / "latest.pt"
 
+    def _monitor_adopted(self, pid: int) -> None:
+        while self._adopted_pid == pid and self.pid_command(pid) is not None:
+            time.sleep(min(self.config.health.poll_seconds, 5.0))
+        with self._lock:
+            if self._adopted_pid != pid:
+                return
+            self._adopted_pid = None
+            requested = self.state.get("status") == "PAUSING"
+            self.state.update(status="PAUSED" if requested else "COMPLETED")
+            self._save()
+
     def _managed_running(self) -> bool:
+
         if self.process is not None:
             return self.process.poll() is None
         pid = self.state.get("pid")
@@ -111,7 +127,8 @@ class AgentManager:
         if not isinstance(pid, int) or not isinstance(command, list):
             return False
         actual = self.pid_command(pid)
-        return bool(actual and str(self.config.resolve_path(self.config.training.script)).lower() in actual.lower())
+        expected = str(self.config.resolve_path(self.config.training.script)).lower()
+        return bool(actual and expected in actual.lower() and "--output-dir" in actual.lower() and str(self.output).lower() in actual.lower())
 
     def command(self, overrides: Mapping[str, object], resume: bool) -> list[str]:
         values = self.config.training_values(overrides)

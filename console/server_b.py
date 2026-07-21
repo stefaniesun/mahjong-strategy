@@ -37,7 +37,10 @@ def create_app(config: ConsoleConfig, scheduler: EvaluationScheduler | None = No
     def status():
         try: agent = managed.client.json("/status")
         except Exception as exc: agent = {"status": "OFFLINE", "error": str(exc)}
-        return {"agent": agent, "evaluator_paused": managed.thermal_paused}
+        return {
+            "agent": agent, "evaluator_paused": managed.thermal_paused,
+            "server_telemetry": read_jsonl(managed.telemetry, limit=8640),
+        }
     @app.get("/api/history")
     def history(limit: int = 2000): return read_jsonl(managed.metrics, limit=min(max(limit, 1), 10000))
     @app.get("/api/evaluations")
@@ -46,10 +49,18 @@ def create_app(config: ConsoleConfig, scheduler: EvaluationScheduler | None = No
     def events(): return read_jsonl(managed.events, limit=1000)
     @app.post("/api/start")
     def start(payload: dict[str, object]):
-        try: return managed.client.post("/start", payload)
-        except Exception as exc: raise HTTPException(502, str(exc)) from exc
+        try:
+            result = managed.client.post("/start", payload)
+            managed.event("info", "training_start_requested")
+            return result
+        except Exception as exc:
+            raise HTTPException(502, str(exc)) from exc
     @app.post("/api/pause")
     def pause():
-        try: return managed.client.post("/pause")
-        except Exception as exc: raise HTTPException(502, str(exc)) from exc
+        try:
+            result = managed.client.post("/pause")
+            managed.event("info", "training_pause_requested")
+            return result
+        except Exception as exc:
+            raise HTTPException(502, str(exc)) from exc
     return app

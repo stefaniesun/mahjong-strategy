@@ -67,11 +67,23 @@ def test_restart_keeps_live_managed_pid_and_prevents_second_start(tmp_path: Path
     cfg = config(tmp_path)
     state = cfg.agent_state_dir / "state.json"
     state.parent.mkdir(parents=True)
-    state.write_text('{"status":"RUNNING","pid":99,"command":["python","cloud_train_s5.py"]}', encoding="utf-8")
-    manager = AgentManager(cfg, pid_command=lambda _pid: str(cfg.project_root / "tools/cloud_train_s5.py"))
+    script = cfg.project_root / "tools/cloud_train_s5.py"
+    state.write_text(f'{{"status":"RUNNING","pid":99,"command":["python","{script.as_posix()}","--output-dir","{cfg.output_dir.as_posix()}"]}}', encoding="utf-8")
+    live_command = f"python {script} --output-dir {cfg.output_dir}"
+    calls = 0
+    def pid_command(_pid):
+        nonlocal calls
+        calls += 1
+        return live_command if calls < 4 else None
+    manager = AgentManager(cfg, pid_command=pid_command)
     assert manager.state["status"] == "RUNNING"
     with pytest.raises(RuntimeError, match="already"):
         manager.start({}, True)
+    for _ in range(30):
+        if manager.state["status"] == "COMPLETED":
+            break
+        threading.Event().wait(0.1)
+    assert manager.state["status"] == "COMPLETED"
 
 
 def test_dead_pid_self_heals_without_autostart(tmp_path: Path) -> None:
