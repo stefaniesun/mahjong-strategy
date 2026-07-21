@@ -8,6 +8,8 @@ import json
 import math
 import os
 import tempfile
+import time
+from datetime import datetime, timezone
 from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 from typing import Callable, Mapping, Sequence
@@ -70,6 +72,7 @@ class S5TrainingConfig:
     frozen_s4_policy_path: Path
     frozen_s4_provenance: Mapping[str, object]
     updates: int = 1
+    episodes_per_update: int = 1
     rollout_seed_start: int = 0
     snapshot_interval: int = 1
     device: str = "cpu"
@@ -88,13 +91,16 @@ class S5TrainingConfig:
     kl_schedule_total_updates: int | None = None
     health_thresholds: HealthThresholds = field(default_factory=HealthThresholds)
     resume_checkpoint: Path | None = None
+    stop_file: Path | None = None
+    metrics_file: Path | None = None
+    run_metadata: Mapping[str, object] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "output_dir", Path(self.output_dir))
         object.__setattr__(self, "frozen_s4_belief_path", Path(self.frozen_s4_belief_path))
         object.__setattr__(self, "frozen_s4_policy_path", Path(self.frozen_s4_policy_path))
-        if self.updates <= 0 or self.snapshot_interval <= 0:
-            raise ValueError("updates and snapshot_interval must be positive")
+        if self.updates <= 0 or self.episodes_per_update <= 0 or self.snapshot_interval <= 0:
+            raise ValueError("updates, episodes_per_update and snapshot_interval must be positive")
         if self.rollout_seed_start < 0:
             raise ValueError("rollout_seed_start must be non-negative")
         if self.device not in {"cpu", "cuda", "auto"}:
@@ -147,8 +153,12 @@ class S5TrainingConfig:
         for artifact in (self.frozen_s4_belief_path, self.frozen_s4_policy_path):
             if not artifact.is_file():
                 raise FileNotFoundError(f"required frozen S4 artifact is missing: {artifact}")
-        if self.resume_checkpoint is not None:
-            object.__setattr__(self, "resume_checkpoint", Path(self.resume_checkpoint))
+        for name in ("resume_checkpoint", "stop_file", "metrics_file"):
+            value = getattr(self, name)
+            if value is not None:
+                object.__setattr__(self, name, Path(value))
+        if not isinstance(self.run_metadata, Mapping):
+            raise TypeError("run_metadata must be a mapping")
 
     def serializable_dict(self, *, resolved_kl_schedule_total_updates: int | None = None) -> dict[str, object]:
         result: dict[str, object] = {
@@ -157,6 +167,7 @@ class S5TrainingConfig:
             "frozen_s4_policy_path": str(self.frozen_s4_policy_path),
             "frozen_s4_provenance": dict(self.frozen_s4_provenance),
             "updates": self.updates,
+            "episodes_per_update": self.episodes_per_update,
             "rollout_seed_start": self.rollout_seed_start,
             "snapshot_interval": self.snapshot_interval,
             "device": self.device,
@@ -172,6 +183,9 @@ class S5TrainingConfig:
             "kl_schedule_total_updates": self.kl_schedule_total_updates,
             "health_thresholds": asdict(self.health_thresholds),
             "resume_checkpoint": str(self.resume_checkpoint) if self.resume_checkpoint else None,
+            "stop_file": str(self.stop_file) if self.stop_file else None,
+            "metrics_file": str(self.metrics_file) if self.metrics_file else None,
+            "run_metadata": dict(self.run_metadata),
         }
         if resolved_kl_schedule_total_updates is not None:
             result["resolved_kl_schedule_total_updates"] = resolved_kl_schedule_total_updates
@@ -202,6 +216,8 @@ class S5TrainingResult:
     report: dict[str, object]
     league: OpponentLeague
     curriculum: ObservationCurriculum
+    total_episodes: int = 0
+    stopped: bool = False
 
 
 def _resolve_device(requested: str) -> torch.device:
@@ -530,7 +546,10 @@ def _save_diagnostic(
         path, model=model, optimizer=optimizer, global_step=global_step, next_rollout_seed=next_seed,
         league=league, curriculum=curriculum,
         config=config.serializable_dict(resolved_kl_schedule_total_updates=schedule_total_updates),
-        metrics={"health": list(health_rows), "alert": reason, "stage": stage, "reason": reason}, frozen_s4_provenance=provenance,
+        metrics={
+            "health": list(health_rows), "alert": reason, "stage": stage,
+            "reason": reason, "checkpoint_kind": "diagnostic", "resumable": False,
+        }, frozen_s4_provenance=provenance,
     )
 
 
@@ -555,8 +574,9 @@ def _s3_alert(metrics: Mapping[str, DualArenaMetrics], thresholds: HealthThresho
 
 def _write_immutable_snapshot(
     directory: Path, *, model: PolicyValueNet, optimizer: torch.optim.Optimizer, global_step: int,
-    next_seed: int, league: OpponentLeague, curriculum: ObservationCurriculum, config: S5TrainingConfig,
-    schedule_total_updates: int, health_rows: Sequence[Mapping[str, float]], provenance: Mapping[str, object],
+    next_seed: int, total_episodes: int, league: OpponentLeague, curriculum: ObservationCurriculum,
+    config: S5TrainingConfig, schedule_total_updates: int,
+    health_rows: Sequence[Mapping[str, float]], provenance: Mapping[str, object],
 ) -> SnapshotMetadata:
     path = directory / f"s5-step-{global_step}.pt"
     if path.exists():
@@ -565,7 +585,8 @@ def _write_immutable_snapshot(
         path, model=model, optimizer=optimizer, global_step=global_step, next_rollout_seed=next_seed,
         league=league, curriculum=curriculum,
         config=config.serializable_dict(resolved_kl_schedule_total_updates=schedule_total_updates),
-        metrics={"health": list(health_rows)}, frozen_s4_provenance=provenance,
+        metrics={"health": list(health_rows), "total_episodes": total_episodes},
+        frozen_s4_provenance=provenance,
     )
     return SnapshotMetadata(
         snapshot_id=f"s5-{global_step}", policy_version=f"s5-step-{global_step}",
@@ -574,7 +595,17 @@ def _write_immutable_snapshot(
     )
 
 
+def _append_metrics(path: Path, row: Mapping[str, object]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = json.dumps(dict(row), ensure_ascii=False, sort_keys=True, separators=(",", ":")) + "\n"
+    with path.open("a", encoding="utf-8", newline="\n") as handle:
+        handle.write(payload)
+        handle.flush()
+        os.fsync(handle.fileno())
+
+
 def run_s5_training(config: S5TrainingConfig, *, dependencies: S5TrainingDependencies | None = None) -> S5TrainingResult:
+
     """Run a finite, resumable S5 update budget and emit auditable artifacts.
 
     Real engine rollout and arena adapters are deliberately injected: the
@@ -605,13 +636,19 @@ def run_s5_training(config: S5TrainingConfig, *, dependencies: S5TrainingDepende
     if not isinstance(league, OpponentLeague) or not isinstance(curriculum, ObservationCurriculum):
         raise ValueError("run_s5_training requires league_factory and curriculum_factory adapters")
 
-    global_step, next_seed = 0, config.rollout_seed_start
+    global_step, next_seed, total_episodes = 0, config.rollout_seed_start, 0
     schedule_total_updates = _resolved_kl_schedule_horizon(config)
     if config.resume_checkpoint is not None:
         restored = load_checkpoint(config.resume_checkpoint, model=model, optimizer=optimizer, restore_rng=True, map_location=device)
+        if restored.metrics.get("resumable") is False or restored.metrics.get("checkpoint_kind") == "diagnostic":
+            raise ValueError("diagnostic checkpoint is not resumable")
         if restored.frozen_s4_provenance != provenance:
             raise ValueError("resume checkpoint frozen S4 provenance does not match this run")
         global_step, next_seed, league, curriculum = restored.global_step, restored.next_rollout_seed, restored.league, restored.curriculum
+        restored_episodes = restored.metrics.get("total_episodes", restored.global_step)
+        if not isinstance(restored_episodes, int) or isinstance(restored_episodes, bool) or restored_episodes < 0:
+            raise ValueError("resume checkpoint total_episodes must be a nonnegative integer")
+        total_episodes = restored_episodes
         schedule_total_updates = _resolved_kl_schedule_horizon(config, restored.config)
 
     checkpoints = config.output_dir / "checkpoints"
@@ -625,7 +662,9 @@ def run_s5_training(config: S5TrainingConfig, *, dependencies: S5TrainingDepende
             raise ValueError("resume checkpoint health metrics must be a list of mappings")
         health_rows = [dict(row) for row in restored_health]
     latest_arena: dict[str, DualArenaMetrics] | None = None
-    for update in range(config.updates):
+    stopped = False
+    for update in range(global_step, global_step + config.updates):
+        update_started = time.monotonic()
         stage = "rollout"
         diagnostic_reason: str | None = None
         runtime = TrainingRuntimeState(
@@ -656,11 +695,13 @@ def run_s5_training(config: S5TrainingConfig, *, dependencies: S5TrainingDepende
             if s3_reason is not None:
                 diagnostic_reason = s3_reason
                 raise RuntimeError(f"PPO health alert: {s3_reason}")
+            total_episodes += config.episodes_per_update
             if global_step % config.snapshot_interval == 0:
                 stage = "snapshot"
                 candidate = _write_immutable_snapshot(
                     checkpoints / "snapshots", model=model, optimizer=optimizer, global_step=global_step,
-                    next_seed=next_seed, league=league, curriculum=curriculum, config=config,
+                    next_seed=next_seed, total_episodes=total_episodes, league=league,
+                    curriculum=curriculum, config=config,
                     schedule_total_updates=schedule_total_updates, health_rows=health_rows, provenance=provenance,
                 )
                 stage = "league"
@@ -672,8 +713,33 @@ def run_s5_training(config: S5TrainingConfig, *, dependencies: S5TrainingDepende
                 latest, model=model, optimizer=optimizer, global_step=global_step, next_rollout_seed=next_seed,
                 league=league, curriculum=curriculum,
                 config=config.serializable_dict(resolved_kl_schedule_total_updates=schedule_total_updates),
-                metrics={"health": health_rows}, frozen_s4_provenance=provenance,
+                metrics={"health": health_rows, "total_episodes": total_episodes}, frozen_s4_provenance=provenance,
             )
+            if config.metrics_file is not None:
+                duration = max(time.monotonic() - update_started, 1e-9)
+                arena_illegal = sum(metric.illegal_actions for metric in latest_arena.values())
+                arena_zero_sum = sum(metric.zero_sum_failures for metric in latest_arena.values())
+                _append_metrics(config.metrics_file, {
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                    "update": update,
+                    "global_step": global_step,
+                    "total_episodes": total_episodes,
+                    "duration_seconds": duration,
+                    "episodes_per_minute": config.episodes_per_update * 60.0 / duration,
+                    "policy_loss": health.policy_loss,
+                    "value_loss": health.value_loss,
+                    "entropy": health.entropy,
+                    "kl": health.kl,
+                    "curriculum_stage": curriculum.current_stage.name,
+                    "league_size": len(league.entries),
+                    "degradation_profile_ratio": curriculum.learner_profile.mid_game_ratio,
+                    "illegal_actions": arena_illegal,
+                    "zero_sum_failures": arena_zero_sum,
+                    "checkpoint": str(latest),
+                })
+            if config.stop_file is not None and config.stop_file.exists():
+                stopped = True
+                break
         except Exception as exc:
             reason = diagnostic_reason or f"{stage}_exception"
             try:
@@ -687,6 +753,8 @@ def run_s5_training(config: S5TrainingConfig, *, dependencies: S5TrainingDepende
     report = {
         "global_step": global_step,
         "next_rollout_seed": next_seed,
+        "total_episodes": total_episodes,
+        "stopped": stopped,
         "device": device.type,
         "frozen_s4_provenance": provenance,
         "health": health_rows,
@@ -706,4 +774,8 @@ def run_s5_training(config: S5TrainingConfig, *, dependencies: S5TrainingDepende
         except Exception:
             pass
         raise
-    return S5TrainingResult(global_step, next_seed, report_path, markdown_path, publication_manifest_path, latest, report, league, curriculum)
+    return S5TrainingResult(
+        global_step, next_seed, report_path, markdown_path, publication_manifest_path,
+        latest, report, league, curriculum, total_episodes, stopped,
+    )
+

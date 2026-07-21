@@ -21,7 +21,7 @@ import sysconfig
 import tempfile
 import time
 import zipfile
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, fields
 from pathlib import Path
 from typing import Iterable
 
@@ -51,9 +51,16 @@ class S5CloudRunConfig:
     episodes_per_update: int = 4
     arena_games: int | None = None
     max_game_steps: int = 1000
+    resume_checkpoint: Path | None = None
+    stop_file: Path | None = None
+    metrics_file: Path | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "output_dir", Path(self.output_dir))
+        for name in ("resume_checkpoint", "stop_file", "metrics_file"):
+            value = getattr(self, name)
+            if value is not None:
+                object.__setattr__(self, name, Path(value))
         if self.arena_games is None:
             object.__setattr__(self, "arena_games", 4 if self.mode == "smoke" else 1000)
         if self.mode not in {"smoke", "train"}:
@@ -71,6 +78,13 @@ class S5CloudRunConfig:
             raise ValueError("smoke mode requires updates=1")
         if self.mode == "smoke" and (self.episodes_per_update != 4 or self.arena_games != 4):
             raise ValueError("smoke mode does not accept formal training episode or arena budgets")
+
+    def serializable_dict(self) -> dict[str, object]:
+        return {
+            field.name: str(value) if isinstance(value, Path) else value
+            for field in fields(self)
+            if (value := getattr(self, field.name)) is not None
+        }
 
 
 @dataclass(frozen=True, slots=True)
@@ -958,8 +972,12 @@ def run_s5_cloud_training(config: S5CloudRunConfig, *, project_root: Path = PROJ
         frozen_s4_provenance=frozen_s4_provenance,
         updates=config.updates,
         rollout_seed_start=config.seed,
+        episodes_per_update=config.episodes_per_update,
         snapshot_interval=1,
         device=device,
+        resume_checkpoint=config.resume_checkpoint,
+        stop_file=config.stop_file,
+        metrics_file=config.metrics_file,
     ), dependencies=dependencies)
     # The report pair must be committed and mutually hash-verified before the
     # outer run manifest points at it.
@@ -972,7 +990,7 @@ def run_s5_cloud_training(config: S5CloudRunConfig, *, project_root: Path = PROJ
             if config.mode == "train" else
             "Smoke is a controlled bootstrap diagnosis, not training or playing-strength evidence."
         ),
-        "resolved_config": {**asdict(config), "output_dir": str(config.output_dir), "resolved_device": device},
+        "resolved_config": {**config.serializable_dict(), "resolved_device": device},
         "s4_artifacts": {
             "release": S4_RELEASE,
             "cold_start_policy_version": S4_V5_COLD_START_POLICY_VERSION,
@@ -1003,6 +1021,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--episodes-per-update", type=int, default=4, help="formal train: completed S1 games per PPO update")
     parser.add_argument("--arena-games", type=int, default=None, help="full games per opponent and arena track (train default: 1000; smoke: 4)")
     parser.add_argument("--max-game-steps", type=int, default=1000)
+    parser.add_argument("--resume", type=Path, default=None, help="完整 S5 checkpoint 恢复路径")
+    parser.add_argument("--stop-file", type=Path, default=None, help="每个 update 结束后检查的优雅暂停标志")
+    parser.add_argument("--metrics-file", type=Path, default=None, help="每个 update 追加的 JSONL 指标路径")
     return parser.parse_args(argv)
 
 
@@ -1069,6 +1090,7 @@ def main(argv: list[str] | None = None) -> int:
     result = run_s5_cloud_training(S5CloudRunConfig(
         args.output_dir, args.mode, args.device, args.updates, args.seed,
         args.episodes_per_update, args.arena_games, args.max_game_steps,
+        args.resume, args.stop_file, args.metrics_file,
     ))
     print(json.dumps({"manifest": str(result.manifest_path), "device": result.device, "global_step": result.global_step}, ensure_ascii=False))
     return 0
