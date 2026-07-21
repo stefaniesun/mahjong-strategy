@@ -40,7 +40,7 @@ sudo apt install lm-sensors
 sensors -j
 ```
 
-创建低权限用户，将仓库放到 `/opt/sichuan-mahjong-engine`，复制环境文件到 `/etc/s5-console.env`、配置到 `/etc/s5-console.yaml`，然后安装 `console/deploy/linux/s5-console.service`：
+创建低权限用户，将仓库放到 `/opt/sichuan-mahjong-engine`，复制配置到 `/etc/s5-console.yaml`。如目录不同，先修改 unit 中的三个绝对路径，然后安装 `console/deploy/linux/s5-console.service`：
 
 ```bash
 sudo cp console/deploy/linux/s5-console.service /etc/systemd/system/

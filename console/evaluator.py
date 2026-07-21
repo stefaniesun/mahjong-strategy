@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import math
 from pathlib import Path
 from typing import Callable
 
@@ -40,14 +39,8 @@ def load_candidate(
 
 def summarize_report(report: ArenaReport, checkpoint: Path, payload: dict[str, object], *, games: int, seed: int, kind: str) -> dict[str, object]:
     candidate_scores = [result.scores[0] for result in report.results]
-    opponent_average = [sum(result.scores[1:]) / 3 for result in report.results]
-    differences = [candidate - opponent for candidate, opponent in zip(candidate_scores, opponent_average)]
-    mean = sum(differences) / games if games else 0.0
-    if games > 1:
-        variance = sum((value - mean) ** 2 for value in differences) / (games - 1)
-        ci95 = 1.96 * math.sqrt(variance / games)
-    else:
-        ci95 = 0.0
+    mean = sum(candidate_scores) / games if games else 0.0
+    ci95 = report.score_confidence95[0] if games else 0.0
     metrics = payload.get("metrics", {})
     return {
         "checkpoint": checkpoint.name,
@@ -68,8 +61,9 @@ def summarize_report(report: ArenaReport, checkpoint: Path, payload: dict[str, o
 
 
 def evaluate_checkpoint(
-    checkpoint: Path, *, games: int, seed: int, kind: str = "quick", max_steps: int = 4000,
+    checkpoint: Path, *, games: int, seed: int, kind: str = "quick", max_steps: int = 1000,
     s4_policy_path: Path | None = None, s4_belief_path: Path | None = None,
+    progress_callback: Callable[[int, int], None] | None = None,
     arena_runner: Callable = run_arena,
 ) -> dict[str, object]:
 
@@ -78,5 +72,8 @@ def evaluate_checkpoint(
     model, belief, payload = load_candidate(
         checkpoint, s4_policy_path=s4_policy_path, s4_belief_path=s4_belief_path,
     )
-    report = arena_runner((ModelPolicy(model, belief_provider=belief, seed=seed), RulePolicy(), RulePolicy(), RulePolicy()), ArenaConfig(games, seed, max_steps))
+    report = arena_runner(
+        (ModelPolicy(model, belief_provider=belief, seed=seed), RulePolicy(), RulePolicy(), RulePolicy()),
+        ArenaConfig(games, seed, max_steps, progress_callback),
+    )
     return summarize_report(report, checkpoint, payload, games=games, seed=seed, kind=kind)

@@ -8,7 +8,7 @@ import json
 from math import sqrt
 from pathlib import Path
 import sys
-from typing import Sequence
+from typing import Callable, Sequence
 
 
 from engine.actions import ActionKind
@@ -26,6 +26,7 @@ class ArenaConfig:
     games: int = 100
     seed: int = 1
     max_steps: int = 1000
+    progress_callback: Callable[[int, int], None] | None = field(default=None, compare=False, repr=False)
 
 
 @dataclass(frozen=True)
@@ -63,7 +64,11 @@ def run_arena(policies: Sequence[BasePolicy], config: ArenaConfig | None = None)
         raise ValueError("games must be non-negative")
     if len(policies) != 4:
         raise ValueError("arena requires exactly four policies")
-    results = [run_arena_game(deepcopy(policies), seed=cfg.seed + offset, max_steps=cfg.max_steps) for offset in range(cfg.games)]
+    results: list[ArenaGameResult] = []
+    for offset in range(cfg.games):
+        results.append(run_arena_game(deepcopy(policies), seed=cfg.seed + offset, max_steps=cfg.max_steps))
+        if cfg.progress_callback is not None:
+            cfg.progress_callback(offset + 1, cfg.games)
 
     return summarize_arena(results)
 
