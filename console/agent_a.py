@@ -90,8 +90,7 @@ class AgentManager:
         if status in {"RUNNING", "PAUSING"} and isinstance(pid, int) and isinstance(command, list):
             actual = self.pid_command(pid)
             expected = str(self.config.resolve_path(self.config.training.script)).lower()
-            saved_command = " ".join(str(part) for part in command).lower()
-            if actual and expected in actual.lower() and all(token in actual.lower() for token in ("--output-dir", str(self.output).lower())) and expected in saved_command:
+            if actual and expected in actual.lower() and all(token in actual.lower() for token in ("--output-dir", str(self.output).lower())):
                 self.state["status"] = status
                 self._adopted_pid = pid
                 self._save()
