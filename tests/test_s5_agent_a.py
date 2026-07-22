@@ -65,6 +65,7 @@ def test_api_snapshot_listing_file_safety_and_bounded_tail(tmp_path: Path) -> No
 
 def test_restart_keeps_live_managed_pid_and_prevents_second_start(tmp_path: Path) -> None:
     cfg = config(tmp_path)
+    object.__setattr__(cfg.health, "poll_seconds", 0.01)
     state = cfg.agent_state_dir / "state.json"
     state.parent.mkdir(parents=True)
     script = cfg.project_root / "tools/cloud_train_s5.py"
