@@ -17,6 +17,8 @@ from typing import Callable, Mapping, Sequence
 import torch
 
 from rl.checkpoints import load_checkpoint, save_checkpoint
+
+_diagnostic_save_checkpoint = save_checkpoint
 from rl.curriculum import ObservationCurriculum
 from rl.league import DualArenaMetrics, OpponentEntry, OpponentLeague, SnapshotMetadata
 from rl.models.value_net import PolicyValueNet, PolicyValueNetConfig
@@ -75,6 +77,8 @@ class S5TrainingConfig:
     episodes_per_update: int = 1
     rollout_seed_start: int = 0
     snapshot_interval: int = 1
+    latest_checkpoint_interval: int = 10
+    arena_interval: int = 1
     device: str = "cpu"
     # None means "derive this from the frozen S4 PolicyNet checkpoint".  The
     # Old placeholder defaults silently disagreed with archived policies; the
@@ -99,8 +103,17 @@ class S5TrainingConfig:
         object.__setattr__(self, "output_dir", Path(self.output_dir))
         object.__setattr__(self, "frozen_s4_belief_path", Path(self.frozen_s4_belief_path))
         object.__setattr__(self, "frozen_s4_policy_path", Path(self.frozen_s4_policy_path))
-        if self.updates <= 0 or self.episodes_per_update <= 0 or self.snapshot_interval <= 0:
-            raise ValueError("updates, episodes_per_update and snapshot_interval must be positive")
+        if (
+            self.updates <= 0
+            or self.episodes_per_update <= 0
+            or self.snapshot_interval <= 0
+            or self.latest_checkpoint_interval <= 0
+            or self.arena_interval <= 0
+        ):
+            raise ValueError(
+                "updates, episodes_per_update, snapshot_interval, "
+                "latest_checkpoint_interval and arena_interval must be positive"
+            )
         if self.rollout_seed_start < 0:
             raise ValueError("rollout_seed_start must be non-negative")
         if self.device not in {"cpu", "cuda", "auto"}:
@@ -170,6 +183,7 @@ class S5TrainingConfig:
             "episodes_per_update": self.episodes_per_update,
             "rollout_seed_start": self.rollout_seed_start,
             "snapshot_interval": self.snapshot_interval,
+            "latest_checkpoint_interval": self.latest_checkpoint_interval,
             "device": self.device,
             "feature_size": self.feature_size,
             "action_size": self.action_size,
@@ -230,16 +244,20 @@ def _artifact_provenance(config: S5TrainingConfig) -> dict[str, object]:
     return {"declared": dict(config.frozen_s4_provenance), "belief": item(config.frozen_s4_belief_path), "policy": item(config.frozen_s4_policy_path)}
 
 
-def _model_checksum(model: PolicyValueNet) -> str:
-    """Hash the exact learner tensors used for one rollout generation."""
+def _state_dict_checksum(state: Mapping[str, torch.Tensor]) -> str:
     digest = hashlib.sha256()
-    for name, tensor in sorted(model.state_dict().items()):
+    for name, tensor in sorted(state.items()):
         digest.update(name.encode("utf-8"))
         value = tensor.detach().cpu().contiguous()
         digest.update(str(value.dtype).encode("ascii"))
         digest.update(str(tuple(value.shape)).encode("ascii"))
         digest.update(value.numpy().tobytes())
     return digest.hexdigest()
+
+
+def _model_checksum(model: PolicyValueNet) -> str:
+    """Hash the exact learner tensors used for one rollout generation."""
+    return _state_dict_checksum(model.state_dict())
 
 
 @dataclass(frozen=True, slots=True)
@@ -542,7 +560,7 @@ def _save_diagnostic(
     global_step: int, next_seed: int, league: OpponentLeague, curriculum: ObservationCurriculum,
     config: S5TrainingConfig, schedule_total_updates: int, health_rows: Sequence[Mapping[str, float]], provenance: Mapping[str, object],
 ) -> None:
-    save_checkpoint(
+    _diagnostic_save_checkpoint(
         path, model=model, optimizer=optimizer, global_step=global_step, next_rollout_seed=next_seed,
         league=league, curriculum=curriculum,
         config=config.serializable_dict(resolved_kl_schedule_total_updates=schedule_total_updates),
@@ -580,6 +598,18 @@ def _write_immutable_snapshot(
 ) -> SnapshotMetadata:
     path = directory / f"s5-step-{global_step}.pt"
     if path.exists():
+        payload = torch.load(path, map_location="cpu", weights_only=True)
+        existing_state = payload.get("model_state_dict") if isinstance(payload, Mapping) else None
+        if (
+            isinstance(existing_state, Mapping)
+            and payload.get("global_step") == global_step
+            and _state_dict_checksum(existing_state) == _model_checksum(model)
+        ):
+            return SnapshotMetadata(
+                snapshot_id=f"s5-{global_step}", policy_version=f"s5-step-{global_step}",
+                checkpoint_path=str(path), training_step=global_step,
+                checksum=hashlib.sha256(path.read_bytes()).hexdigest(),
+            )
         raise FileExistsError(f"immutable snapshot already exists: {path}")
     save_checkpoint(
         path, model=model, optimizer=optimizer, global_step=global_step, next_rollout_seed=next_seed,
@@ -640,6 +670,10 @@ def run_s5_training(config: S5TrainingConfig, *, dependencies: S5TrainingDepende
     schedule_total_updates = _resolved_kl_schedule_horizon(config)
     if config.resume_checkpoint is not None:
         restored = load_checkpoint(config.resume_checkpoint, model=model, optimizer=optimizer, restore_rng=True, map_location=device)
+        for parameter_group in optimizer.param_groups:
+            parameter_group["lr"] = config.learning_rate
+            if "initial_lr" in parameter_group:
+                parameter_group["initial_lr"] = config.learning_rate
         if restored.metrics.get("resumable") is False or restored.metrics.get("checkpoint_kind") == "diagnostic":
             raise ValueError("diagnostic checkpoint is not resumable")
         if restored.frozen_s4_provenance != provenance:
@@ -689,14 +723,24 @@ def run_s5_training(config: S5TrainingConfig, *, dependencies: S5TrainingDepende
             if health_reason is not None:
                 diagnostic_reason = health_reason
                 raise RuntimeError(f"PPO health alert: {health_reason}")
-            stage = "evaluation"
-            latest_arena = _evaluate(dependencies.arena_evaluator, model, runtime)
-            s3_reason = _s3_alert(latest_arena, config.health_thresholds)
-            if s3_reason is not None:
-                diagnostic_reason = s3_reason
-                raise RuntimeError(f"PPO health alert: {s3_reason}")
+            arena_ran = latest_arena is None or global_step % config.arena_interval == 0
+            if arena_ran:
+                stage = "evaluation"
+                latest_arena = _evaluate(dependencies.arena_evaluator, model, runtime)
+                s3_reason = _s3_alert(latest_arena, config.health_thresholds)
+                if s3_reason is not None:
+                    diagnostic_reason = s3_reason
+                    raise RuntimeError(f"PPO health alert: {s3_reason}")
             total_episodes += config.episodes_per_update
             if global_step % config.snapshot_interval == 0:
+                if not arena_ran:
+                    stage = "evaluation"
+                    latest_arena = _evaluate(dependencies.arena_evaluator, model, runtime)
+                    s3_reason = _s3_alert(latest_arena, config.health_thresholds)
+                    if s3_reason is not None:
+                        diagnostic_reason = s3_reason
+                        raise RuntimeError(f"PPO health alert: {s3_reason}")
+                    arena_ran = True
                 stage = "snapshot"
                 candidate = _write_immutable_snapshot(
                     checkpoints / "snapshots", model=model, optimizer=optimizer, global_step=global_step,
@@ -706,19 +750,31 @@ def run_s5_training(config: S5TrainingConfig, *, dependencies: S5TrainingDepende
                 )
                 stage = "league"
                 league.promote_candidate(candidate, latest_arena)
-            stage = "curriculum"
-            curriculum.advance(latest_arena["s3"])
-            stage = "latest_checkpoint"
-            save_checkpoint(
-                latest, model=model, optimizer=optimizer, global_step=global_step, next_rollout_seed=next_seed,
-                league=league, curriculum=curriculum,
-                config=config.serializable_dict(resolved_kl_schedule_total_updates=schedule_total_updates),
-                metrics={"health": health_rows, "total_episodes": total_episodes}, frozen_s4_provenance=provenance,
-            )
+            if arena_ran:
+                stage = "curriculum"
+                curriculum.advance(latest_arena["s3"])
+            should_stop = config.stop_file is not None and config.stop_file.exists()
+            should_save_latest = global_step % config.latest_checkpoint_interval == 0 or should_stop
+            if should_save_latest:
+                stage = "latest_checkpoint"
+                save_checkpoint(
+                    latest, model=model, optimizer=optimizer, global_step=global_step, next_rollout_seed=next_seed,
+                    league=league, curriculum=curriculum,
+                    config=config.serializable_dict(resolved_kl_schedule_total_updates=schedule_total_updates),
+                    metrics={"health": health_rows, "total_episodes": total_episodes}, frozen_s4_provenance=provenance,
+                )
             if config.metrics_file is not None:
                 duration = max(time.monotonic() - update_started, 1e-9)
-                arena_illegal = sum(metric.illegal_actions for metric in latest_arena.values())
-                arena_zero_sum = sum(metric.zero_sum_failures for metric in latest_arena.values())
+                arena_illegal = (
+                    sum(metric.illegal_actions for metric in latest_arena.values())
+                    if latest_arena is not None
+                    else 0
+                )
+                arena_zero_sum = (
+                    sum(metric.zero_sum_failures for metric in latest_arena.values())
+                    if latest_arena is not None
+                    else 0
+                )
                 _append_metrics(config.metrics_file, {
                     "timestamp": datetime.now(timezone.utc).isoformat(),
                     "update": update,
@@ -730,6 +786,12 @@ def run_s5_training(config: S5TrainingConfig, *, dependencies: S5TrainingDepende
                     "value_loss": health.value_loss,
                     "entropy": health.entropy,
                     "kl": health.kl,
+                    "approx_kl": health.approx_kl,
+                    "clip_fraction": health.clip_fraction,
+                    "grad_norm": health.grad_norm,
+                    "ppo_epochs_run": health.epochs_run,
+                    "ppo_early_stopped": health.early_stopped,
+                    "arena_ran": arena_ran,
                     "curriculum_stage": curriculum.current_stage.name,
                     "league_size": len(league.entries),
                     "degradation_profile_ratio": curriculum.learner_profile.mid_game_ratio,
@@ -737,7 +799,7 @@ def run_s5_training(config: S5TrainingConfig, *, dependencies: S5TrainingDepende
                     "zero_sum_failures": arena_zero_sum,
                     "checkpoint": str(latest),
                 })
-            if config.stop_file is not None and config.stop_file.exists():
+            if should_stop:
                 stopped = True
                 break
         except Exception as exc:
@@ -749,7 +811,36 @@ def run_s5_training(config: S5TrainingConfig, *, dependencies: S5TrainingDepende
                 pass
             raise
 
-    assert latest_arena is not None
+    if health_rows:
+        stage = "final_checkpoint"
+        try:
+            save_checkpoint(
+                latest,
+                model=model,
+                optimizer=optimizer,
+                global_step=global_step,
+                next_rollout_seed=next_seed,
+                league=league,
+                curriculum=curriculum,
+                config=config.serializable_dict(resolved_kl_schedule_total_updates=schedule_total_updates),
+                metrics={"health": health_rows, "total_episodes": total_episodes},
+                frozen_s4_provenance=provenance,
+            )
+        except Exception:
+            try:
+                _save_diagnostic(
+                    diagnostic, reason="latest_checkpoint_exception", stage="latest_checkpoint",
+                    model=model, optimizer=optimizer, global_step=global_step, next_seed=next_seed,
+                    league=league, curriculum=curriculum, config=config,
+                    schedule_total_updates=schedule_total_updates, health_rows=health_rows,
+                    provenance=provenance,
+                )
+            except Exception:
+                pass
+            raise
+    if latest_arena is None:
+        stage = "final_evaluation"
+        latest_arena = _evaluate(dependencies.arena_evaluator, model, runtime)
     report = {
         "global_step": global_step,
         "next_rollout_seed": next_seed,

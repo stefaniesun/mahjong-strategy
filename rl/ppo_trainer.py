@@ -18,6 +18,8 @@ class PPOConfig:
     entropy_coef: float = 0.01
     kl_coef: float = 0.0
     max_grad_norm: float = 0.5
+    epochs: int = 1
+    target_kl: float | None = None
 
     def __post_init__(self) -> None:
         for name in (
@@ -42,6 +44,15 @@ class PPOConfig:
                 raise ValueError(f"{name} must be nonnegative")
         if self.max_grad_norm <= 0.0:
             raise ValueError("max_grad_norm must be positive")
+        if not isinstance(self.epochs, int) or isinstance(self.epochs, bool) or self.epochs <= 0:
+            raise ValueError("epochs must be a positive integer")
+        if self.target_kl is not None and (
+            not isinstance(self.target_kl, (int, float))
+            or isinstance(self.target_kl, bool)
+            or not math.isfinite(self.target_kl)
+            or self.target_kl <= 0.0
+        ):
+            raise ValueError("target_kl must be finite and positive or None")
 
 
 @dataclass(frozen=True)
@@ -53,6 +64,9 @@ class PPOHealth:
     kl: float
     clip_fraction: float
     grad_norm: float
+    approx_kl: float = 0.0
+    epochs_run: int = 1
+    early_stopped: bool = False
 
 
 @dataclass
@@ -179,12 +193,9 @@ def ppo_update(
     features = batch.features.to(device=device).detach()
     legal_mask = batch.legal_mask.to(device=device, dtype=torch.bool)
     actions = batch.actions.to(device=device, dtype=torch.long)
-    output = model(features, legal_mask)
-    logits, values = output.action_logits, output.values
-    if not torch.isfinite(logits).all() or not torch.isfinite(values).all():
-        raise ValueError("model outputs must be finite")
-
-    dtype = values.dtype
+    with torch.no_grad():
+        initial_output = model(features, legal_mask)
+    dtype = initial_output.values.dtype
     old_log_probs = batch.old_log_probs.to(device=device, dtype=dtype).detach()
     old_values = batch.old_values.to(device=device, dtype=dtype).detach()
     rewards = batch.rewards.to(device=device, dtype=dtype).detach()
@@ -195,36 +206,63 @@ def ppo_update(
             advantages.std(unbiased=False) + torch.finfo(dtype).eps
         )
 
-    log_probs = torch.log_softmax(logits, dim=-1)
-    selected_log_probs = log_probs.gather(1, actions.unsqueeze(1)).squeeze(1)
-    ratio = torch.exp(selected_log_probs - old_log_probs)
-    clipped_ratio = ratio.clamp(1.0 - config.clip_ratio, 1.0 + config.clip_ratio)
-    policy_loss = -torch.minimum(ratio * normalized_advantages, clipped_ratio * normalized_advantages).mean()
-    value_loss = F.mse_loss(values, returns)
-
-    policy_probs = torch.softmax(logits, dim=-1)
-    legal_terms = legal_mask.to(dtype=dtype)
-    entropy = -(policy_probs * log_probs * legal_terms).sum(dim=-1).mean()
-
     reference_logits = batch.reference_logits.to(device=device, dtype=dtype).detach()
     reference_logits = reference_logits.masked_fill(~legal_mask, torch.finfo(dtype).min)
     reference_log_probs = torch.log_softmax(reference_logits, dim=-1)
-    kl = (policy_probs * (log_probs - reference_log_probs) * legal_terms).sum(dim=-1).mean()
+    legal_terms = legal_mask.to(dtype=dtype)
+    health: PPOHealth | None = None
 
-    total_loss = policy_loss + config.value_coef * value_loss - config.entropy_coef * entropy + config.kl_coef * kl
-    if not torch.isfinite(total_loss):
-        raise ValueError("PPO loss must be finite")
-    optimizer.zero_grad(set_to_none=True)
-    total_loss.backward()
-    grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), config.max_grad_norm)
-    optimizer.step()
+    for epoch in range(1, config.epochs + 1):
+        output = model(features, legal_mask)
+        logits, values = output.action_logits, output.values
+        if not torch.isfinite(logits).all() or not torch.isfinite(values).all():
+            raise ValueError("model outputs must be finite")
 
-    return PPOHealth(
-        total_loss=float(total_loss.detach()),
-        policy_loss=float(policy_loss.detach()),
-        value_loss=float(value_loss.detach()),
-        entropy=float(entropy.detach()),
-        kl=float(kl.detach()),
-        clip_fraction=float((ratio.sub(1.0).abs() > config.clip_ratio).float().mean().detach()),
-        grad_norm=float(grad_norm.detach()),
-    )
+        log_probs = torch.log_softmax(logits, dim=-1)
+        selected_log_probs = log_probs.gather(1, actions.unsqueeze(1)).squeeze(1)
+        log_ratio = selected_log_probs - old_log_probs
+        ratio = torch.exp(log_ratio)
+        clipped_ratio = ratio.clamp(1.0 - config.clip_ratio, 1.0 + config.clip_ratio)
+        policy_loss = -torch.minimum(
+            ratio * normalized_advantages,
+            clipped_ratio * normalized_advantages,
+        ).mean()
+        value_loss = F.mse_loss(values, returns)
+
+        policy_probs = torch.softmax(logits, dim=-1)
+        entropy = -(policy_probs * log_probs * legal_terms).sum(dim=-1).mean()
+        kl = (policy_probs * (log_probs - reference_log_probs) * legal_terms).sum(dim=-1).mean()
+        approx_kl = ((ratio - 1.0) - log_ratio).mean()
+
+        total_loss = (
+            policy_loss
+            + config.value_coef * value_loss
+            - config.entropy_coef * entropy
+            + config.kl_coef * kl
+        )
+        if not torch.isfinite(total_loss):
+            raise ValueError("PPO loss must be finite")
+        optimizer.zero_grad(set_to_none=True)
+        total_loss.backward()
+        grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), config.max_grad_norm)
+        optimizer.step()
+
+        early_stopped = config.target_kl is not None and float(approx_kl.detach()) > config.target_kl
+        health = PPOHealth(
+            total_loss=float(total_loss.detach()),
+            policy_loss=float(policy_loss.detach()),
+            value_loss=float(value_loss.detach()),
+            entropy=float(entropy.detach()),
+            kl=float(kl.detach()),
+            clip_fraction=float((ratio.sub(1.0).abs() > config.clip_ratio).float().mean().detach()),
+            grad_norm=float(grad_norm.detach()),
+            approx_kl=float(approx_kl.detach()),
+            epochs_run=epoch,
+            early_stopped=early_stopped,
+        )
+        if early_stopped:
+            break
+
+    if health is None:  # pragma: no cover - PPOConfig validates epochs > 0.
+        raise RuntimeError("PPO update completed without an optimization epoch")
+    return health

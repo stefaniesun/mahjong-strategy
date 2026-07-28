@@ -118,6 +118,31 @@ def test_checkpoint_replace_failure_preserves_existing_canonical_file(tmp_path, 
     assert path.read_bytes() == before
 
 
+def test_checkpoint_retries_transient_windows_replace_lock(tmp_path, monkeypatch) -> None:
+    import rl.checkpoints as checkpoints
+
+    model = PolicyValueNet(PolicyValueNetConfig(input_size=3, action_size=4, hidden_size=8, residual_blocks=0))
+    optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
+    path = tmp_path / "state.pt"
+    common = dict(model=model, optimizer=optimizer, global_step=0, next_rollout_seed=0, league=_league(), curriculum=_curriculum(), config={}, metrics={}, frozen_s4_provenance={"release": "S4-v1"})
+    real_replace = checkpoints.os.replace
+    attempts = 0
+
+    def transient_replace(source, destination) -> None:
+        nonlocal attempts
+        attempts += 1
+        if attempts < 3:
+            raise PermissionError("file temporarily locked")
+        real_replace(source, destination)
+
+    monkeypatch.setattr(checkpoints.os, "replace", transient_replace)
+    monkeypatch.setattr(checkpoints.time, "sleep", lambda _seconds: None)
+    save_checkpoint(path, **common)
+    assert attempts == 3
+    assert path.exists()
+    assert not list(tmp_path.glob("*.tmp"))
+
+
 def test_checkpoint_fsyncs_temp_file_and_parent_before_returning(tmp_path, monkeypatch) -> None:
     """The payload and its directory are both made durable around replacement."""
     import rl.checkpoints as checkpoints

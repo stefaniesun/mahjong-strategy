@@ -136,13 +136,43 @@ class AgentManager:
             raise ValueError(f"training script does not exist: {script}")
         python = str(values.pop("python"))
         command = [python, "-S", str(script), "--mode", "train", "--output-dir", str(self.output)]
-        flags = {"updates": "--updates", "episodes_per_update": "--episodes-per-update", "arena_games": "--arena-games", "seed": "--seed", "device": "--device", "max_game_steps": "--max-game-steps"}
+        resume_checkpoint = values.pop("resume_checkpoint", None)
+        flags = {
+            "updates": "--updates",
+            "episodes_per_update": "--episodes-per-update",
+            "arena_games": "--arena-games",
+            "arena_interval": "--arena-interval",
+            "snapshot_interval": "--snapshot-interval",
+            "latest_checkpoint_interval": "--latest-checkpoint-interval",
+            "seed": "--seed",
+            "device": "--device",
+            "max_game_steps": "--max-game-steps",
+            "learning_rate": "--learning-rate",
+            "clip_epsilon": "--clip-epsilon",
+            "ppo_epochs": "--ppo-epochs",
+            "target_kl": "--target-kl",
+            "kl_start": "--kl-start",
+            "kl_end": "--kl-end",
+            "max_kl": "--max-kl",
+            "rollout_worker_url": "--rollout-worker-url",
+            "rollout_worker_games": "--rollout-worker-games",
+            "rollout_worker_timeout_seconds": "--rollout-worker-timeout-seconds",
+        }
         for name, flag in flags.items():
             command.extend((flag, str(values[name])))
+        if self.config.training.rollout_worker_token:
+            command.extend(("--rollout-worker-token", self.config.training.rollout_worker_token))
+        if values["rollout_worker_required"]:
+            command.append("--rollout-worker-required")
         command.extend(("--stop-file", str(self.stop_file), "--metrics-file", str(self.metrics_file)))
         latest = self.latest_checkpoint()
         if resume and latest.is_file():
             command.extend(("--resume", str(latest)))
+        elif resume and resume_checkpoint:
+            configured_checkpoint = self.config.resolve_path(str(resume_checkpoint))
+            if not configured_checkpoint.is_file():
+                raise ValueError(f"resume checkpoint does not exist: {configured_checkpoint}")
+            command.extend(("--resume", str(configured_checkpoint)))
         elif not resume and (latest.exists() or self.metrics_file.exists()):
             raise ValueError("resume=false requires an empty output directory")
         return command

@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import random
 import tempfile
+import time
 import json
 from dataclasses import dataclass
 from pathlib import Path
@@ -48,12 +49,12 @@ def _restore_rng_state(state: Mapping[str, object]) -> None:
     torch_state = state["torch"]
     if not isinstance(torch_state, torch.Tensor):
         raise TypeError("checkpoint torch RNG state must be a tensor")
-    torch.set_rng_state(torch_state)
+    torch.set_rng_state(torch_state.cpu())
     if "torch_cuda" in state and torch.cuda.is_available():
         cuda_state = state["torch_cuda"]
         if not isinstance(cuda_state, (list, tuple)) or not all(isinstance(item, torch.Tensor) for item in cuda_state):
             raise TypeError("checkpoint CUDA RNG state must be tensors")
-        torch.cuda.set_rng_state_all(list(cuda_state))
+        torch.cuda.set_rng_state_all([item.cpu() for item in cuda_state])
 
 
 def _require_json_mapping(value: Mapping[str, object], *, name: str) -> dict[str, object]:
@@ -153,7 +154,14 @@ def save_checkpoint(
             torch.save(payload, handle)
             handle.flush()
             os.fsync(handle.fileno())
-        os.replace(temporary, destination)
+        for attempt in range(6):
+            try:
+                os.replace(temporary, destination)
+                break
+            except PermissionError:
+                if attempt == 5:
+                    raise
+                time.sleep(0.05 * (2**attempt))
         _fsync_parent(destination.parent)
     finally:
         if temporary.exists():

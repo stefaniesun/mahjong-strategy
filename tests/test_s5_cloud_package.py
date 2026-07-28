@@ -165,12 +165,24 @@ def test_s5_cloud_formal_train_uses_accepted_v5_s4_checkpoints(monkeypatch, tmp_
             updates=1,
             episodes_per_update=2,
             arena_games=2,
+            learning_rate=1.0e-5,
+            clip_epsilon=0.05,
+            kl_start=0.1,
+            kl_end=0.5,
+            max_kl=0.2,
         ),
         project_root=ROOT,
     )
 
-    assert captured["config"].frozen_s4_provenance["release"] == "S4/v5_20260718_encoder_v4"
-    assert captured["config"].frozen_s4_policy_path == ROOT / "training_artifacts/S4/v5_20260718_encoder_v4/checkpoints/policy_s4.pt"
+    training_config = captured["config"]
+    assert training_config.frozen_s4_provenance["release"] == "S4/v5_20260718_encoder_v4"
+    assert training_config.frozen_s4_policy_path == ROOT / "training_artifacts/S4/v5_20260718_encoder_v4/checkpoints/policy_s4.pt"
+    assert training_config.learning_rate == pytest.approx(1.0e-5)
+    assert training_config.ppo.clip_ratio == pytest.approx(0.05)
+    assert training_config.kl_start_coef == pytest.approx(0.1)
+    assert training_config.kl_end_coef == pytest.approx(0.5)
+    assert training_config.health_thresholds.max_kl == pytest.approx(0.2)
+    assert captured["dependencies"].league_factory().config.arena_games_per_track == 2
 
 
 def test_s5_cloud_controlled_smoke_uses_single_v5_cold_start_provenance(monkeypatch, tmp_path: Path) -> None:

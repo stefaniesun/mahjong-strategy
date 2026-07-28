@@ -1,0 +1,43 @@
+project_root: F:/maytek/mahjong-strategy
+agent:
+  host: 127.0.0.1
+  port: 8865
+  state_dir: .console/s5_step900_lr1e5_u100/agent
+server:
+  host: 127.0.0.1
+  port: 8866
+  state_dir: .console/s5_step900_lr1e5_u100/server
+  agent_url: http://127.0.0.1:8865
+training:
+  python: F:/python3.12/python.exe
+  script: tools/cloud_train_s5.py
+  output_dir: training_artifacts/S5/step900_lr1e5_targetkl008_u100
+  resume_checkpoint: training_artifacts/S5/step800_conservative_u100/checkpoints/snapshots/s5-step-900.pt
+  updates: 100
+  episodes_per_update: 32
+  arena_games: 32
+  arena_interval: 10
+  snapshot_interval: 25
+  latest_checkpoint_interval: 10
+  seed: 202607220001
+  device: cuda
+  max_game_steps: 4000
+  learning_rate: 0.00001
+  clip_epsilon: 0.08
+  ppo_epochs: 2
+  target_kl: 0.008
+  kl_start: 0.05
+  kl_end: 0.02
+  max_kl: 0.2
+  # 机器 B 负责每轮 16 局，机器 A 负责其余 16 局。
+  rollout_worker_url: "http://192.168.1.5:8770"
+  rollout_worker_token: "s5-lan-20260724-8d2a7e41b6034f15"
+  rollout_worker_games: 16
+  rollout_worker_timeout_seconds: 900
+  rollout_worker_required: true
+evaluation:
+  quick_games: 200
+  formal_games: 500
+  min_disk_free_gib: 10
+health:
+  poll_seconds: 1

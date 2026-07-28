@@ -10,6 +10,7 @@ itself.
 from __future__ import annotations
 
 import argparse
+import concurrent.futures
 import copy
 import hashlib
 import json
@@ -50,10 +51,25 @@ class S5CloudRunConfig:
     seed: int = 20260715
     episodes_per_update: int = 4
     arena_games: int | None = None
+    arena_interval: int = 1
+    snapshot_interval: int = 100
+    latest_checkpoint_interval: int = 10
     max_game_steps: int = 1000
+    learning_rate: float = 3.0e-4
+    clip_epsilon: float = 0.2
+    ppo_epochs: int = 1
+    target_kl: float | None = None
+    kl_start: float = 0.01
+    kl_end: float = 0.1
+    max_kl: float = 10.0
     resume_checkpoint: Path | None = None
     stop_file: Path | None = None
     metrics_file: Path | None = None
+    rollout_worker_url: str = ""
+    rollout_worker_token: str = ""
+    rollout_worker_games: int = 0
+    rollout_worker_timeout_seconds: float = 900.0
+    rollout_worker_required: bool = False
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "output_dir", Path(self.output_dir))
@@ -71,9 +87,43 @@ class S5CloudRunConfig:
             raise ValueError("updates must be a positive integer")
         if not isinstance(self.seed, int) or isinstance(self.seed, bool) or self.seed < 0:
             raise ValueError("seed must be a non-negative integer")
-        for name, value in (("episodes_per_update", self.episodes_per_update), ("arena_games", self.arena_games), ("max_game_steps", self.max_game_steps)):
+        for name, value in (
+            ("episodes_per_update", self.episodes_per_update),
+            ("arena_games", self.arena_games),
+            ("arena_interval", self.arena_interval),
+            ("snapshot_interval", self.snapshot_interval),
+            ("ppo_epochs", self.ppo_epochs),
+            ("latest_checkpoint_interval", self.latest_checkpoint_interval),
+            ("max_game_steps", self.max_game_steps),
+        ):
             if not isinstance(value, int) or isinstance(value, bool) or value <= 0:
                 raise ValueError(f"{name} must be a positive integer")
+        for name, value in (
+            ("learning_rate", self.learning_rate),
+            ("clip_epsilon", self.clip_epsilon),
+            ("kl_start", self.kl_start),
+            ("kl_end", self.kl_end),
+            ("max_kl", self.max_kl),
+        ):
+            if not isinstance(value, (int, float)) or isinstance(value, bool) or not math.isfinite(value) or value <= 0:
+                raise ValueError(f"{name} must be finite and positive")
+        if self.target_kl is not None and (
+            not isinstance(self.target_kl, (int, float))
+            or isinstance(self.target_kl, bool)
+            or not math.isfinite(self.target_kl)
+            or self.target_kl <= 0
+        ):
+            raise ValueError("target_kl must be finite and positive or None")
+        if not isinstance(self.rollout_worker_games, int) or isinstance(self.rollout_worker_games, bool) or self.rollout_worker_games < 0:
+            raise ValueError("rollout_worker_games must be a non-negative integer")
+        if self.rollout_worker_games > self.episodes_per_update:
+            raise ValueError("rollout_worker_games cannot exceed episodes_per_update")
+        if self.rollout_worker_games and not self.rollout_worker_url:
+            raise ValueError("rollout_worker_url is required when rollout_worker_games is positive")
+        if self.rollout_worker_timeout_seconds <= 0:
+            raise ValueError("rollout_worker_timeout_seconds must be positive")
+        if self.mode == "smoke" and self.rollout_worker_games:
+            raise ValueError("smoke mode does not support distributed rollout")
         if self.mode == "smoke" and self.updates != 1:
             raise ValueError("smoke mode requires updates=1")
         if self.mode == "smoke" and (self.episodes_per_update != 4 or self.arena_games != 4):
@@ -323,7 +373,7 @@ def _controlled_dependencies(seed: int):
     import torch
 
     from rl.curriculum import CurriculumConfig, CurriculumStage, DegradationProfile, ObservationCurriculum
-    from rl.league import DualArenaMetrics, OpponentLeague, SnapshotMetadata
+    from rl.league import DualArenaMetrics, LeagueConfig, OpponentLeague, SnapshotMetadata
     from rl.train_rl import S5TrainingDependencies
     from rl.types import TrajectoryStep
 
@@ -353,12 +403,15 @@ def _controlled_dependencies(seed: int):
         return DualArenaMetrics(0.55 + offset, 0.53 + offset, 4, 4, 0, 0)
 
     def league() -> OpponentLeague:
-        return OpponentLeague(current_policy=SnapshotMetadata(
-            S4_V5_COLD_START_POLICY_VERSION,
-            S4_V5_COLD_START_POLICY_VERSION,
-            "cold-start.pt",
-            0,
-        ))
+        return OpponentLeague(
+            current_policy=SnapshotMetadata(
+                S4_V5_COLD_START_POLICY_VERSION,
+                S4_V5_COLD_START_POLICY_VERSION,
+                "cold-start.pt",
+                0,
+            ),
+            config=LeagueConfig(arena_games_per_track=4),
+        )
 
     def curriculum() -> ObservationCurriculum:
         return ObservationCurriculum(CurriculumConfig((
@@ -380,7 +433,7 @@ def _formal_dependencies(root: Path, cloud_config: S5CloudRunConfig):
     import torch
 
     from rl.curriculum import CurriculumConfig, CurriculumStage, DegradationProfile, ObservationCurriculum
-    from rl.league import OpponentLeague, SnapshotMetadata
+    from rl.league import LeagueConfig, OpponentLeague, SnapshotMetadata
     from rl.models.value_net import PolicyValueNet, PolicyValueNetConfig
     from rl.opponent_resolver import OpponentResolver
     from rl.production_adapter import (
@@ -389,6 +442,7 @@ def _formal_dependencies(root: Path, cloud_config: S5CloudRunConfig):
         run_production_arena,
         run_production_game,
     )
+    from rl.distributed_rollout import RemoteRolloutClient
     from rl.rollout import FrozenBeliefProvider, LearnerDecision
     from rl.train_rl import S5TrainingDependencies
 
@@ -405,13 +459,16 @@ def _formal_dependencies(root: Path, cloud_config: S5CloudRunConfig):
     )
 
     def league() -> OpponentLeague:
-        return OpponentLeague(current_policy=SnapshotMetadata(
-            S4_V5_COLD_START_POLICY_VERSION,
-            S4_V5_COLD_START_POLICY_VERSION,
-            str(frozen_policy_path),
-            0,
-            _sha256(frozen_policy_path),
-        ))
+        return OpponentLeague(
+            current_policy=SnapshotMetadata(
+                S4_V5_COLD_START_POLICY_VERSION,
+                S4_V5_COLD_START_POLICY_VERSION,
+                str(frozen_policy_path),
+                0,
+                _sha256(frozen_policy_path),
+            ),
+            config=LeagueConfig(arena_games_per_track=cloud_config.arena_games),
+        )
 
     curriculum_state = ObservationCurriculum(CurriculumConfig((
         CurriculumStage("perfect", DegradationProfile.perfect(), 0.0, 0.0),
@@ -451,12 +508,21 @@ def _formal_dependencies(root: Path, cloud_config: S5CloudRunConfig):
             max_game_steps=cloud_config.max_game_steps,
         )
 
+    remote_client = (
+        RemoteRolloutClient(
+            cloud_config.rollout_worker_url,
+            token=cloud_config.rollout_worker_token,
+            timeout_seconds=cloud_config.rollout_worker_timeout_seconds,
+        )
+        if cloud_config.rollout_worker_games
+        else None
+    )
+
     def rollout(model, _training_config, update: int, next_seed: int, state):
-        steps = []
-        runtime = runtime_state(model, state)
+        tasks = []
         for episode in range(cloud_config.episodes_per_update):
             episode_seed = cloud_config.seed + next_seed * 10_000 + episode
-            task = ProductionGameTask(
+            tasks.append(ProductionGameTask(
                 round_id=next_seed,
                 game_index=episode,
                 policy_generation=state.policy_generation,
@@ -465,9 +531,41 @@ def _formal_dependencies(root: Path, cloud_config: S5CloudRunConfig):
                 learner_seed=episode_seed ^ 0x5A17,
                 opponent_seed=episode_seed,
                 learner_seat=episode % 4,
+            ))
+        remote_count = cloud_config.rollout_worker_games if remote_client is not None else 0
+        remote_tasks = tasks[:remote_count]
+        local_tasks = tasks[remote_count:]
+        runtime = runtime_state(model, state)
+
+        def run_local(batch):
+            local_steps = []
+            for task in batch:
+                local_steps.extend(run_production_game(task, runtime).steps)
+            return tuple(local_steps)
+
+        if not remote_tasks:
+            return run_local(local_tasks)
+        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
+            local_future = executor.submit(run_local, local_tasks)
+            remote_future = executor.submit(
+                remote_client.rollout,
+                model=model,
+                tasks=remote_tasks,
+                league=state.league,
+                curriculum=state.curriculum,
+                policy_generation=state.policy_generation,
+                policy_checksum=state.policy_checksum,
+                max_game_steps=cloud_config.max_game_steps,
             )
-            steps.extend(run_production_game(task, runtime).steps)
-        return tuple(steps)
+            local_steps = local_future.result()
+            try:
+                remote_steps = remote_future.result()
+            except Exception as exc:
+                if cloud_config.rollout_worker_required:
+                    raise
+                print(f"WARNING: rollout worker failed; replaying {len(remote_tasks)} games locally: {exc}", flush=True)
+                remote_steps = run_local(remote_tasks)
+        return tuple((*remote_steps, *local_steps))
 
     def arena(model, entry, state):
         return run_production_arena(
@@ -956,7 +1054,8 @@ def run_s5_cloud_training(config: S5CloudRunConfig, *, project_root: Path = PROJ
     # been checked.  Everything above this line is stdlib-only verification.
     if str(root) not in sys.path:
         sys.path.insert(0, str(root))
-    from rl.train_rl import S5TrainingConfig, load_published_s5_report, run_s5_training
+    from rl.ppo_trainer import PPOConfig
+    from rl.train_rl import HealthThresholds, S5TrainingConfig, load_published_s5_report, run_s5_training
 
     belief, policy = root / S4_BELIEF, root / S4_POLICY
     dependencies = _controlled_dependencies(config.seed) if config.mode == "smoke" else _formal_dependencies(root, config)
@@ -973,8 +1072,20 @@ def run_s5_cloud_training(config: S5CloudRunConfig, *, project_root: Path = PROJ
         updates=config.updates,
         rollout_seed_start=config.seed,
         episodes_per_update=config.episodes_per_update,
-        snapshot_interval=1,
+        snapshot_interval=1 if config.mode == "smoke" else config.snapshot_interval,
+        latest_checkpoint_interval=1 if config.mode == "smoke" else config.latest_checkpoint_interval,
+        arena_interval=1 if config.mode == "smoke" else config.arena_interval,
         device=device,
+        learning_rate=config.learning_rate,
+        ppo=PPOConfig(
+            clip_ratio=config.clip_epsilon,
+            epochs=config.ppo_epochs,
+            target_kl=config.target_kl,
+        ),
+        kl_start_coef=config.kl_start,
+        kl_end_coef=config.kl_end,
+        kl_schedule_total_updates=None if config.resume_checkpoint is not None else config.updates,
+        health_thresholds=HealthThresholds(max_kl=config.max_kl),
         resume_checkpoint=config.resume_checkpoint,
         stop_file=config.stop_file,
         metrics_file=config.metrics_file,
@@ -1020,10 +1131,25 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--seed", type=int, default=20260715)
     parser.add_argument("--episodes-per-update", type=int, default=4, help="formal train: completed S1 games per PPO update")
     parser.add_argument("--arena-games", type=int, default=None, help="full games per opponent and arena track (train default: 1000; smoke: 4)")
+    parser.add_argument("--arena-interval", type=int, default=1, help="formal train: interval in updates between arena evaluations")
+    parser.add_argument("--snapshot-interval", type=int, default=100, help="formal train: immutable snapshot interval in updates")
+    parser.add_argument("--latest-checkpoint-interval", type=int, default=10, help="formal train: resumable latest checkpoint interval in updates")
     parser.add_argument("--max-game-steps", type=int, default=1000)
+    parser.add_argument("--learning-rate", type=float, default=3.0e-4)
+    parser.add_argument("--clip-epsilon", type=float, default=0.2)
+    parser.add_argument("--ppo-epochs", type=int, default=1)
+    parser.add_argument("--target-kl", type=float)
+    parser.add_argument("--kl-start", type=float, default=0.01)
+    parser.add_argument("--kl-end", type=float, default=0.1)
+    parser.add_argument("--max-kl", type=float, default=10.0)
     parser.add_argument("--resume", type=Path, default=None, help="完整 S5 checkpoint 恢复路径")
     parser.add_argument("--stop-file", type=Path, default=None, help="每个 update 结束后检查的优雅暂停标志")
     parser.add_argument("--metrics-file", type=Path, default=None, help="每个 update 追加的 JSONL 指标路径")
+    parser.add_argument("--rollout-worker-url", default="", help="机器 B rollout Worker 地址，例如 http://192.168.1.20:8770")
+    parser.add_argument("--rollout-worker-token", default="", help="rollout Worker 共享认证令牌")
+    parser.add_argument("--rollout-worker-games", type=int, default=0, help="每个 update 分配给机器 B 的对局数")
+    parser.add_argument("--rollout-worker-timeout-seconds", type=float, default=900.0)
+    parser.add_argument("--rollout-worker-required", action="store_true", help="B 不可用时终止，而不是回退到 A 本地采样")
     return parser.parse_args(argv)
 
 
@@ -1088,9 +1214,32 @@ def main(argv: list[str] | None = None) -> int:
         print(build_s5_cloud_package(args.build_package))
         return 0
     result = run_s5_cloud_training(S5CloudRunConfig(
-        args.output_dir, args.mode, args.device, args.updates, args.seed,
-        args.episodes_per_update, args.arena_games, args.max_game_steps,
-        args.resume, args.stop_file, args.metrics_file,
+        output_dir=args.output_dir,
+        mode=args.mode,
+        device=args.device,
+        updates=args.updates,
+        seed=args.seed,
+        episodes_per_update=args.episodes_per_update,
+        arena_games=args.arena_games,
+        arena_interval=args.arena_interval,
+        snapshot_interval=args.snapshot_interval,
+        latest_checkpoint_interval=args.latest_checkpoint_interval,
+        max_game_steps=args.max_game_steps,
+        learning_rate=args.learning_rate,
+        clip_epsilon=args.clip_epsilon,
+        ppo_epochs=args.ppo_epochs,
+        target_kl=args.target_kl,
+        kl_start=args.kl_start,
+        kl_end=args.kl_end,
+        max_kl=args.max_kl,
+        resume_checkpoint=args.resume,
+        stop_file=args.stop_file,
+        metrics_file=args.metrics_file,
+        rollout_worker_url=args.rollout_worker_url,
+        rollout_worker_token=args.rollout_worker_token,
+        rollout_worker_games=args.rollout_worker_games,
+        rollout_worker_timeout_seconds=args.rollout_worker_timeout_seconds,
+        rollout_worker_required=args.rollout_worker_required,
     ))
     print(json.dumps({"manifest": str(result.manifest_path), "device": result.device, "global_step": result.global_step}, ensure_ascii=False))
     return 0

@@ -8,7 +8,13 @@ from typing import Mapping, TypeVar
 import yaml
 
 
-ALLOWED_TRAINING_OVERRIDES = frozenset({"updates", "episodes_per_update", "arena_games", "seed", "device", "max_game_steps"})
+ALLOWED_TRAINING_OVERRIDES = frozenset({
+    "updates", "episodes_per_update", "arena_games", "arena_interval", "snapshot_interval",
+    "latest_checkpoint_interval", "seed", "device", "max_game_steps",
+    "learning_rate", "clip_epsilon", "ppo_epochs", "target_kl", "kl_start", "kl_end", "max_kl",
+    "rollout_worker_url", "rollout_worker_games", "rollout_worker_timeout_seconds",
+    "rollout_worker_required",
+})
 T = TypeVar("T")
 
 
@@ -17,12 +23,28 @@ class TrainingConfig:
     python: str = "python"
     script: str = "tools/cloud_train_s5.py"
     output_dir: str = "training_artifacts/S5/local_console"
+    resume_checkpoint: str | None = None
     updates: int = 100
     episodes_per_update: int = 32
     arena_games: int = 100
+    arena_interval: int = 1
+    snapshot_interval: int = 50
+    latest_checkpoint_interval: int = 10
     seed: int = 20260721
     device: str = "auto"
     max_game_steps: int = 4000
+    learning_rate: float = 3.0e-4
+    clip_epsilon: float = 0.2
+    ppo_epochs: int = 1
+    target_kl: float | None = None
+    kl_start: float = 0.01
+    kl_end: float = 0.1
+    max_kl: float = 10.0
+    rollout_worker_url: str = ""
+    rollout_worker_token: str = ""
+    rollout_worker_games: int = 0
+    rollout_worker_timeout_seconds: float = 900.0
+    rollout_worker_required: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -129,7 +151,10 @@ def _finite_number(name: str, value: object, *, minimum: float = 0) -> None:
 
 
 def _validate_training(values: Mapping[str, object]) -> None:
-    for key in ("updates", "episodes_per_update", "arena_games", "max_game_steps"):
+    for key in (
+        "updates", "episodes_per_update", "arena_games", "arena_interval",
+        "snapshot_interval", "latest_checkpoint_interval", "max_game_steps", "ppo_epochs",
+    ):
         _positive_int(key, values[key])
     if not isinstance(values["seed"], int) or isinstance(values["seed"], bool):
         raise ValueError("seed must be an integer")
@@ -138,6 +163,18 @@ def _validate_training(values: Mapping[str, object]) -> None:
             raise ValueError(f"{key} must be a nonempty string")
     if values["device"] not in {"auto", "cpu", "cuda"}:
         raise ValueError("device must be auto, cpu or cuda")
+    for key in ("learning_rate", "clip_epsilon", "kl_start", "kl_end", "max_kl"):
+        value = values[key]
+        if not isinstance(value, (int, float)) or isinstance(value, bool) or not math.isfinite(value) or value <= 0:
+            raise ValueError(f"{key} must be finite and positive")
+    target_kl = values["target_kl"]
+    if target_kl is not None and (
+        not isinstance(target_kl, (int, float))
+        or isinstance(target_kl, bool)
+        or not math.isfinite(target_kl)
+        or target_kl <= 0
+    ):
+        raise ValueError("target_kl must be finite and positive or null")
 
 
 def load_config(path: Path) -> ConsoleConfig:
@@ -159,6 +196,12 @@ def load_config(path: Path) -> ConsoleConfig:
         server=_strict_dataclass(ServerConfig, raw.get("server")),
     )
     _validate_training(result.training_values())
+    if result.training.rollout_worker_games < 0 or result.training.rollout_worker_games > result.training.episodes_per_update:
+        raise ValueError("training.rollout_worker_games must be between 0 and episodes_per_update")
+    if result.training.rollout_worker_games and not result.training.rollout_worker_url:
+        raise ValueError("training.rollout_worker_url is required when rollout_worker_games is positive")
+    if result.training.rollout_worker_timeout_seconds <= 0:
+        raise ValueError("training.rollout_worker_timeout_seconds must be positive")
     for name, value in (
         ("poll_seconds", result.health.poll_seconds),
         ("agent_cpu_pause_c", result.health.agent_cpu_pause_c),

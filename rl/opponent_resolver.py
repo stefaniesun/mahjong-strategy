@@ -69,6 +69,8 @@ class ModelPolicy(BasePolicy):
         self,
         protocol_state: S2ProtocolState,
         legal_mask: Sequence[bool],
+        *,
+        legal_actions: Sequence[Action] | None = None,
     ) -> Action:
         self.model.cpu()
         self.model.eval()

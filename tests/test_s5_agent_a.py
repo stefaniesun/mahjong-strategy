@@ -40,6 +40,8 @@ def test_command_whitelist_pause_and_generation_safe_monitor(tmp_path: Path) -> 
     assert result["status"] == "RUNNING"
     assert processes[0].kwargs["shell"] is False
     assert processes[0].command[processes[0].command.index("--updates") + 1] == "2"
+    assert processes[0].command[processes[0].command.index("--snapshot-interval") + 1] == "50"
+    assert processes[0].command[processes[0].command.index("--latest-checkpoint-interval") + 1] == "10"
     with pytest.raises(ValueError, match="not allowed"):
         manager.command({"script": "bad.py"}, False)
     assert manager.pause()["status"] == "PAUSING"

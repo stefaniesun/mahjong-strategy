@@ -306,6 +306,22 @@ def test_immutable_snapshot_refuses_overwrite(tmp_path) -> None:
     assert snapshot.read_bytes() == original
 
 
+def test_resume_reuses_matching_orphan_snapshot(tmp_path) -> None:
+    import rl.train_rl as train_rl
+
+    belief, policy = _files(tmp_path)
+    config = S5TrainingConfig(output_dir=tmp_path / "out", frozen_s4_belief_path=belief, frozen_s4_policy_path=policy, frozen_s4_provenance={"release": "S4-v1"})
+    model = _model_factory(config)
+    optimizer = torch.optim.Adam(model.parameters(), lr=config.learning_rate)
+    directory = config.output_dir / "checkpoints" / "snapshots"
+    directory.mkdir(parents=True)
+    common = dict(directory=directory, model=model, optimizer=optimizer, global_step=1, next_seed=2, total_episodes=1, league=_league_factory(), curriculum=_curriculum_factory(), config=config, schedule_total_updates=1, health_rows=[], provenance={"release": "S4-v1"})
+    first = train_rl._write_immutable_snapshot(**common)
+    second = train_rl._write_immutable_snapshot(**common)
+    assert second == first
+    assert Path(second.checkpoint_path).exists()
+
+
 def test_resumed_kl_schedule_uses_restored_global_progress(tmp_path, monkeypatch) -> None:
     import rl.train_rl as train_rl
     belief, policy = _files(tmp_path)
@@ -366,6 +382,36 @@ def test_default_kl_schedule_horizon_is_preserved_across_split_resume(tmp_path, 
     assert expected == coefficients == [0.0, 1.0]
 
 
+def test_arena_interval_reuses_last_report_between_evaluations(tmp_path) -> None:
+    belief, policy = _files(tmp_path)
+    arena_calls: list[int] = []
+
+    def evaluator(model, opponent, runtime):
+        arena_calls.append(runtime.policy_generation)
+        return _per_entry_evaluator(model, opponent, runtime)
+
+    run_s5_training(
+        S5TrainingConfig(
+            output_dir=tmp_path / "interval",
+            frozen_s4_belief_path=belief,
+            frozen_s4_policy_path=policy,
+            frozen_s4_provenance={"release": "S4-v1"},
+            updates=3,
+            arena_interval=3,
+            snapshot_interval=10,
+        ),
+        dependencies=S5TrainingDependencies(
+            model_factory=_model_factory,
+            rollout_factory=lambda *_: _steps(),
+            arena_evaluator=evaluator,
+            league_factory=_league_factory,
+            curriculum_factory=_curriculum_factory,
+        ),
+    )
+
+    assert len(arena_calls) == 8
+
+
 def test_resume_rejects_explicit_kl_horizon_that_differs_from_checkpoint(tmp_path) -> None:
     belief, policy = _files(tmp_path)
     deps = S5TrainingDependencies(
@@ -413,6 +459,38 @@ def test_resumed_report_and_latest_checkpoint_retain_prior_health_rows(tmp_path)
     assert len(resumed.report["health"]) == 3
     latest_payload = torch.load(resumed.checkpoint_path, weights_only=False)
     assert len(latest_payload["metrics"]["health"]) == 3
+
+
+def test_resume_applies_requested_learning_rate(tmp_path) -> None:
+    belief, policy = _files(tmp_path)
+    deps = S5TrainingDependencies(
+        model_factory=_model_factory,
+        rollout_factory=lambda *_args: _steps(),
+        arena_evaluator=_per_entry_evaluator,
+        league_factory=_league_factory,
+        curriculum_factory=_curriculum_factory,
+    )
+    common = dict(
+        output_dir=tmp_path / "out",
+        frozen_s4_belief_path=belief,
+        frozen_s4_policy_path=policy,
+        frozen_s4_provenance={"release": "S4-v1"},
+    )
+    first = run_s5_training(
+        S5TrainingConfig(**common, updates=1, learning_rate=3.0e-4),
+        dependencies=deps,
+    )
+    resumed = run_s5_training(
+        S5TrainingConfig(
+            **common,
+            updates=1,
+            learning_rate=1.5e-5,
+            resume_checkpoint=first.checkpoint_path,
+        ),
+        dependencies=deps,
+    )
+    payload = torch.load(resumed.checkpoint_path, weights_only=False)
+    assert payload["optimizer_state_dict"]["param_groups"][0]["lr"] == pytest.approx(1.5e-5)
 
 
 def _fail_latest_checkpoint(path, *args, **kwargs):

@@ -3,12 +3,28 @@ training:
   python: python
   script: tools/cloud_train_s5.py
   output_dir: training_artifacts/S5/local_console
-  updates: 100
-  episodes_per_update: 32
-  arena_games: 100
+  updates: 200
+  episodes_per_update: 16
+  arena_games: 8
+  arena_interval: 10
+  snapshot_interval: 50
+  latest_checkpoint_interval: 10
   seed: 20260721
   device: auto
   max_game_steps: 4000
+  learning_rate: 0.00003
+  clip_epsilon: 0.1
+  ppo_epochs: 3
+  target_kl: 0.015
+  kl_start: 0.05
+  kl_end: 0.02
+  max_kl: 0.2
+  # 双机采样：B 上运行 python -m console.rollout_worker --host 0.0.0.0 --port 8770 --token CHANGE_ME
+  rollout_worker_url: ""
+  rollout_worker_token: ""
+  rollout_worker_games: 8
+  rollout_worker_timeout_seconds: 900
+  rollout_worker_required: false
 health:
   poll_seconds: 10
   agent_cpu_pause_c: 85

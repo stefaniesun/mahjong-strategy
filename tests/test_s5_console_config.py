@@ -16,9 +16,22 @@ def test_strict_config_defaults_and_whitelist(tmp_path: Path) -> None:
     assert config.project_root == tmp_path
     assert config.training.updates == 7
     assert config.agent.host == "127.0.0.1"
+    assert config.training.snapshot_interval == 50
+    assert config.training.latest_checkpoint_interval == 10
+    assert config.training_values({"snapshot_interval": 25})["snapshot_interval"] == 25
     assert set(config.training_values({"device": "cpu"})) >= ALLOWED_TRAINING_OVERRIDES
     with pytest.raises(ValueError, match="not allowed"):
         config.training_values({"script": "evil.py"})
+
+
+def test_config_accepts_resume_checkpoint(tmp_path: Path) -> None:
+    path = tmp_path / "config.yaml"
+    path.write_text(
+        "project_root: .\ntraining:\n  resume_checkpoint: checkpoints/step-800.pt\n",
+        encoding="utf-8",
+    )
+    config = load_config(path)
+    assert config.training.resume_checkpoint == "checkpoints/step-800.pt"
 
 
 def test_unknown_and_invalid_config_are_rejected(tmp_path: Path) -> None:

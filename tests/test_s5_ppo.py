@@ -59,6 +59,13 @@ def test_ppo_config_rejects_nonfinite_hyperparameters() -> None:
         PPOConfig(gamma=float("nan"))
 
 
+def test_ppo_config_rejects_invalid_epochs_and_target_kl() -> None:
+    with pytest.raises(ValueError, match="epochs"):
+        PPOConfig(epochs=0)
+    with pytest.raises(ValueError, match="target_kl"):
+        PPOConfig(target_kl=0.0)
+
+
 def test_ppo_update_rejects_rows_without_legal_actions() -> None:
     batch = _batch()
     batch.legal_mask[1] = False
@@ -224,6 +231,7 @@ def test_ppo_update_runs_one_optimizer_step_with_finite_metrics() -> None:
             metrics.value_loss,
             metrics.entropy,
             metrics.kl,
+            metrics.approx_kl,
             metrics.clip_fraction,
             metrics.grad_norm,
         )
