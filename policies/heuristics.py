@@ -50,16 +50,24 @@ def choose_void_suit(hand: Hand) -> Suit:
 
 
 def choose_swap_tiles(hand: Hand) -> tuple[Tile, Tile, Tile]:
+    return _choose_swap_tiles(hand, _swap_combo_score)
+
+
+def choose_swap_tiles_legacy(hand: Hand) -> tuple[Tile, Tile, Tile]:
+    return _choose_swap_tiles(hand, _legacy_swap_combo_score)
+
+
+def _choose_swap_tiles(hand: Hand, scorer) -> tuple[Tile, Tile, Tile]:
     preferred = choose_void_suit(hand)
     legal_suits = [preferred] + [suit for suit in SUITS if suit is not preferred]
     best_combo: tuple[Tile, Tile, Tile] | None = None
-    best_score: tuple[int, int, int, tuple[str, ...]] | None = None
+    best_score = None
     for suit in legal_suits:
         suited = [tile for tile in hand.tiles() if tile.suit is suit]
         if len(suited) < 3:
             continue
         for combo in set(combinations(suited, 3)):
-            score = _swap_combo_score(hand, combo, preferred)
+            score = scorer(hand, combo, preferred)
             if best_score is None or score < best_score:
                 best_combo = combo
                 best_score = score
@@ -116,12 +124,25 @@ def _discard_tiebreak_score(hand: Hand, tile: Tile, void_suit: Suit | None) -> t
     return (shanten(trial, void_suit=void_suit), -_isolation_score(hand, tile), _duplicate_count(hand, tile), tile.index)
 
 
-def _swap_combo_score(hand: Hand, combo: tuple[Tile, Tile, Tile], preferred: Suit) -> tuple[int, int, int, tuple[str, ...]]:
+def _legacy_swap_combo_score(hand: Hand, combo: tuple[Tile, Tile, Tile], preferred: Suit) -> tuple[int, int, int, tuple[str, ...]]:
     pair_breaks = sum(1 for tile in set(combo) if hand.count(tile) >= 2 and combo.count(tile) < hand.count(tile))
     kept_suit_penalty = 0 if combo[0].suit is preferred else 1
     connection = sum(_tile_connection_score(hand, tile) for tile in combo)
     duplicates = sum(_duplicate_count(hand, tile) for tile in combo)
     return (kept_suit_penalty, pair_breaks + duplicates, connection, tuple(tile_to_str(tile) for tile in sorted(combo)))
+
+
+def _swap_combo_score(hand: Hand, combo: tuple[Tile, Tile, Tile], preferred: Suit) -> tuple[int, int, int, int, int, tuple[str, ...]]:
+    pair_breaks = sum(1 for tile in set(combo) if hand.count(tile) >= 2 and combo.count(tile) < hand.count(tile))
+    kept_suit_penalty = 0 if combo[0].suit is preferred else 1
+    connection = sum(_tile_connection_score(hand, tile) for tile in combo)
+    duplicates = sum(_duplicate_count(hand, tile) for tile in combo)
+    remaining = Hand(counts=list(hand.counts), melds=list(hand.melds))
+    for tile in combo:
+        remaining.remove(tile)
+    remaining_shanten = shanten(remaining)
+    remaining_useful = len(useful_tiles(remaining))
+    return (kept_suit_penalty, pair_breaks + duplicates, remaining_shanten, -remaining_useful, connection, tuple(tile_to_str(tile) for tile in sorted(combo)))
 
 
 def _suit_connection_score(hand: Hand, suit: Suit) -> int:

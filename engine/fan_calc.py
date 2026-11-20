@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from engine.config import RuleConfig
+from engine.config import RuleConfig, active_rule_config
 from engine.hand import Hand
 from engine.meld import MeldKind
 from engine.tiles import Tile
@@ -81,7 +81,7 @@ def _score(fan: int, config: RuleConfig) -> int:
 
 
 def calculate_fan(hand: Hand, context: WinContext, config: RuleConfig | None = None) -> FanResult:
-    config = config or RuleConfig()
+    config = config or active_rule_config()
     patterns: list[str] = []
     fan = 0
 

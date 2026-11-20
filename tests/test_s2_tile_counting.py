@@ -18,7 +18,7 @@ def _tiles(texts):
     return [parse_tile(text) for text in texts]
 
 
-def test_compute_seen_counts_uses_only_visible_tiles_and_revealed_win_hands():
+def test_compute_seen_counts_uses_only_visible_tiles_and_hides_winner_hands():
     state = GameState(
         hands=[
             Hand.from_strings(["1W", "2W"]),
@@ -43,7 +43,7 @@ def test_compute_seen_counts_uses_only_visible_tiles_and_revealed_win_hands():
     assert counts[parse_tile("3W").index] == 0
     assert counts[parse_tile("4W").index] == 1
     assert counts[parse_tile("5W").index] == 3
-    assert counts[parse_tile("6W").index] == 2
+    assert counts[parse_tile("6W").index] == 0
     assert counts[parse_tile("7W").index] == 0
 
 
@@ -68,8 +68,8 @@ def test_compute_tile_statistics_returns_remaining_counts_and_unknown_pool_break
 
     assert statistics.remaining_tile_counts.status == protocol_state.facts.seen_counts.status
     assert statistics.remaining_tile_counts.value[parse_tile("1W").index] == 2
-    assert statistics.remaining_tile_counts.value[parse_tile("2W").index] == 1
-    assert statistics.unknown_pool_breakdown.value == {"wall": 2, "opponents": {"2": 4, "3": 5}}
+    assert statistics.remaining_tile_counts.value[parse_tile("2W").index] == 4
+    assert statistics.unknown_pool_breakdown.value == {"wall": 2, "opponents": {"1": 3, "2": 4, "3": 5}}
 
 
 def test_reconcile_soft_counts_clamps_counts_and_preserves_global_conservation():

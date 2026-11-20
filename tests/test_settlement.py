@@ -156,3 +156,14 @@ def test_drawn_game_refund_also_reverts_kong_transfer():
 
 
 
+
+
+def test_concealed_kong_is_paid_only_by_players_still_in_game():
+    scores = [0, 0, 0, 0]
+
+    record = record_kong_payment(scores, gang_id=1, kong_player=0, kind=GangKind.CONCEALED, active_players=[0, 2, 3])
+
+    # 1 号已胡离场,不再付杠钱
+    assert scores == [4, 0, -2, -2]
+    assert record.payments == ((2, 2), (3, 2))
+    assert record.total_amount == 4

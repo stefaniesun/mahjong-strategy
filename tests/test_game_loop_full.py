@@ -5,7 +5,7 @@ from engine.game import Game
 from engine.gang import GangKind
 from engine.hand import Hand
 from engine.settlement import record_kong_payment
-from engine.state import GameState, PendingDiscard
+from engine.state import GameState, PendingDiscard, WinRecord
 
 
 from engine.meld import Meld, MeldKind
@@ -546,10 +546,68 @@ def test_added_kong_can_be_robbed_and_kong_is_cancelled():
 
     assert state.scores == [-8, 8, 0, 0]
     assert state.won[1] is True
-    assert state.hands[0].count(tile) == 1
+    # 被抢的牌离开杠者手牌,杠者剩 10 张暗牌 + 一组碰 = 13 张
+    assert state.hands[0].count(tile) == 0
+    assert sum(state.hands[0].counts) == 10
     assert state.hands[0].melds[-1].kind is MeldKind.PONG
     assert state.gang_records == []
     assert state.pending_rob_kong is None
+    assert state.current_player == 2
+
+
+def test_added_kong_robbed_by_one_and_passed_by_another_is_still_cancelled():
+    game = Game(seed=20)
+    state = game.reset()
+    state.phase = "play"
+    state.current_player = 0
+    state.void_suits = [None, None, None, None]
+    tile = parse_tile("9W")
+    state.wall = [parse_tile("8B"), parse_tile("9B"), parse_tile("7B")]
+    state.hands[0] = Hand.from_strings("9W 1T 2T 3T 4T 5T 6T 7T 8T 9T 1B".split())
+    state.hands[0].melds.append(Meld(MeldKind.PONG, (tile, tile, tile), exposed=True, from_player=2))
+    state.hands[1] = Hand.from_strings("1W 1W 2W 2W 3T 3T 4T 4T 5B 5B 6B 6B 9W".split())
+    state.hands[2] = Hand.from_strings("7W 8W 2B 2B 2B 3B 3B 3B 4B 4B 4B 5T 5T".split())
+
+    game.step(0, Action(ActionKind.KONG, tile=tile, kong_kind=GangKind.ADDED))
+    assert state.pending_rob_kong is not None
+    assert state.pending_rob_kong.winners == [1, 2]
+
+    game.step(1, Action(ActionKind.ROB_KONG_WIN))
+    game.step(2, Action(ActionKind.PASS))
+
+    assert state.won == [False, True, False, False]
+    assert state.hands[0].count(tile) == 0
+    assert sum(state.hands[0].counts) == 10
+    assert state.hands[0].melds[-1].kind is MeldKind.PONG
+    assert state.gang_records == []
+    assert state.pending_rob_kong is None
+    # 杠被抢,轮到杠者下家(1 已胡,跳到 2)摸牌
+    assert state.current_player == 2
+    assert sum(state.hands[2].counts) == 14
+    assert len(state.wall) == 2
+
+
+def test_added_kong_completes_when_all_robbers_pass():
+    game = Game(seed=20)
+    state = game.reset()
+    state.phase = "play"
+    state.current_player = 0
+    state.void_suits = [None, None, None, None]
+    tile = parse_tile("9W")
+    state.wall = [parse_tile("8B"), parse_tile("9B")]
+    state.hands[0] = Hand.from_strings("9W 1T 2T 3T 4T 5T 6T 7T 8T 9T 1B".split())
+    state.hands[0].melds.append(Meld(MeldKind.PONG, (tile, tile, tile), exposed=True, from_player=2))
+    state.hands[1] = Hand.from_strings("1W 1W 2W 2W 3T 3T 4T 4T 5B 5B 6B 6B 9W".split())
+
+    game.step(0, Action(ActionKind.KONG, tile=tile, kong_kind=GangKind.ADDED))
+    game.step(1, Action(ActionKind.PASS))
+
+    assert state.won == [False, False, False, False]
+    assert state.hands[0].melds[-1].kind is MeldKind.KONG
+    assert len(state.gang_records) == 1
+    # 补杠后摸了一张岭上牌:10 张旧暗牌 + 1 张岭上牌
+    assert sum(state.hands[0].counts) == 11
+    assert state.current_player == 0
 
 
 def test_rob_kong_pass_lock_uses_robbing_kong_fan_context():
@@ -651,3 +709,84 @@ def test_first_win_multi_discard_makes_discarder_next_dealer():
 
 
 
+
+
+def test_win_records_keep_winning_tile_and_source():
+    # 点炮胡:记录放炮者和胡牌张
+    game = Game(seed=5)
+    state = game.reset()
+    state.phase = "play"
+    state.current_player = 0
+    state.void_suits = [None, None, None, None]
+    state.hands[0] = Hand.from_strings("5W 6W 7W 8W 9W 1T 2T 3T 4T 5T 6T 7T 8T 9T".split())
+    state.hands[1] = Hand.from_strings("1W 1W 2W 2W 3T 3T 4T 4T 5B 5B 6B 6B 9W".split())
+    game.step(0, Action(ActionKind.DISCARD, tile=parse_tile("9W")))
+    game.step(1, Action(ActionKind.WIN))
+    assert state.win_records[1] == WinRecord(tile=parse_tile("9W"), kind="discard", from_player=0)
+    assert state.win_records[0] is None
+
+    # 自摸:胡牌张是刚摸到的那张
+    game = Game(seed=4)
+    state = game.reset()
+    state.phase = "play"
+    state.current_player = 3
+    state.void_suits = [None, None, None, None]
+    state.hands[0] = Hand.from_strings("1W 1W 2W 2W 3T 3T 4T 4T 5B 5B 6B 6B 9W".split())
+    state.hands[3] = Hand.from_strings("2T 3T 4T 5T 6T 7T 8T 9T 1B 2B 3B 5B 6B".split())
+    state.wall = [parse_tile("7B"), parse_tile("8B"), parse_tile("9W")]
+    game.step(3, Action(ActionKind.DISCARD, tile=parse_tile("2T")))
+    _pass_all_discard_responses(game)
+    assert state.last_drawn[0] == parse_tile("9W")
+    game.step(0, Action(ActionKind.SELF_WIN))
+    assert state.win_records[0] == WinRecord(tile=parse_tile("9W"), kind="self_draw", from_player=None)
+
+
+def test_self_win_without_a_draw_has_unknown_winning_tile():
+    game = Game(seed=4)
+    state = game.reset()
+    state.phase = "play"
+    state.current_player = 0
+    state.void_suits = [None, Suit.BING, Suit.BING, Suit.BING]
+    state.hands[0] = Hand.from_strings("1W 1W 2W 2W 3T 3T 4T 4T 5B 5B 6B 6B 9W 9W".split())
+
+    game.step(0, Action(ActionKind.SELF_WIN))
+
+    assert state.win_records[0] == WinRecord(tile=None, kind="self_draw", from_player=None)
+
+
+def test_rob_kong_win_record_and_pong_clears_last_drawn():
+    game = Game(seed=20)
+    state = game.reset()
+    state.phase = "play"
+    state.current_player = 0
+    state.void_suits = [None, None, None, None]
+    tile = parse_tile("9W")
+    state.wall = [parse_tile("8B"), parse_tile("9B")]
+    state.hands[0] = Hand.from_strings("9W 1T 2T 3T 4T 5T 6T 7T 8T 9T 1B".split())
+    state.hands[0].melds.append(Meld(MeldKind.PONG, (tile, tile, tile), exposed=True, from_player=2))
+    state.hands[1] = Hand.from_strings("1W 1W 2W 2W 3T 3T 4T 4T 5B 5B 6B 6B 9W".split())
+    state.last_drawn[0] = tile
+
+    game.step(0, Action(ActionKind.KONG, tile=tile, kong_kind=GangKind.ADDED))
+    game.step(1, Action(ActionKind.ROB_KONG_WIN))
+
+    assert state.win_records[1] == WinRecord(tile=tile, kind="rob_kong", from_player=0)
+    assert state.last_drawn[2] == parse_tile("9B")
+
+
+def test_concealed_kong_after_someone_won_is_not_charged_to_the_winner():
+    game = Game(seed=17)
+    state = game.reset()
+    state.phase = "play"
+    state.current_player = 0
+    state.void_suits = [None, None, None, None]
+    state.won[1] = True
+    state.win_order = [1]
+    tile = parse_tile("5W")
+    state.wall = [parse_tile("8B"), parse_tile("9B")]
+    state.hands[0] = Hand.from_strings("5W 5W 5W 5W 1T 2T 3T 4T 5T 6T 7T 8T 9T 1B".split())
+
+    game.step(0, Action(ActionKind.KONG, tile=tile, kong_kind=GangKind.CONCEALED))
+
+    assert state.scores == [4, 0, -2, -2]
+    assert state.gang_records[-1].payments == ((2, 2), (3, 2))

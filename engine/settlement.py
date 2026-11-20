@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 
-from engine.config import RuleConfig
+from engine.config import RuleConfig, active_rule_config
 from engine.fan_calc import WinContext, calculate_fan
 from engine.gang import GangKind, GangRecord
 from engine.hand import Hand
@@ -59,8 +59,9 @@ def record_kong_payment(
     kind: str | GangKind,
     from_player: int | None = None,
     config: RuleConfig | None = None,
+    active_players: list[int] | None = None,
 ) -> GangRecord:
-    config = config or RuleConfig()
+    config = config or active_rule_config()
     gang_kind = _normalize_kong_kind(kind)
     amount = config.base_score * 2
     payments: list[tuple[int, int]] = []
@@ -73,7 +74,9 @@ def record_kong_payment(
         _transfer(scores, from_player, kong_player, amount)
         payments.append((from_player, amount))
     elif gang_kind is GangKind.CONCEALED:
-        for player in range(len(scores)):
+        # 已胡离场的玩家不再参与之后的杠钱结算
+        players = active_players if active_players is not None else list(range(len(scores)))
+        for player in players:
             if player != kong_player:
                 _transfer(scores, player, kong_player, amount)
                 payments.append((player, amount))
@@ -125,7 +128,7 @@ def settle_drawn_game(
     gang_records: list[GangRecord],
     config: RuleConfig | None = None,
 ) -> list[GangRecord]:
-    config = config or RuleConfig()
+    config = config or active_rule_config()
     ting_players = [
         player
         for player, player_hand in enumerate(hands)

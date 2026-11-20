@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from engine.config import RuleConfig
 from engine.gang import GangRecord
 from engine.hand import Hand
 from engine.tiles import Suit, Tile, tile_to_str
@@ -19,6 +20,19 @@ class PendingRobKong:
     kong_player: int
     tile: Tile
     winners: list[int]
+    robbers: list[int] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class WinRecord:
+    """胡牌时亮出的那张牌及来源。kind: discard / self_draw / rob_kong。
+
+    自摸时 tile 是刚摸到的那张;没有摸牌就胡(如庄家起手)时为 None。
+    """
+
+    tile: Tile | None
+    kind: str
+    from_player: int | None
 
 
 @dataclass
@@ -33,6 +47,8 @@ class GameState:
     scores: list[int] = field(default_factory=lambda: [0, 0, 0, 0])
     won: list[bool] = field(default_factory=lambda: [False, False, False, False])
     win_order: list[int] = field(default_factory=list)
+    win_records: list[WinRecord | None] = field(default_factory=lambda: [None, None, None, None])
+    last_drawn: list[Tile | None] = field(default_factory=lambda: [None, None, None, None])
     rivers: list[list[Tile]] = field(default_factory=lambda: [[], [], [], []])
     swap_choices: list[tuple[Tile, ...] | None] = field(default_factory=lambda: [None, None, None, None])
     swap_direction: int = 1
@@ -58,6 +74,7 @@ class GameState:
 
     next_dealer: int | None = None
     first_win_multi_discarder: int | None = None
+    rule_config: RuleConfig | None = None  # 这局用的规则;None 表示当前生效的规则
 
 
 
@@ -71,6 +88,16 @@ class GameState:
             "scores": list(self.scores),
             "won": list(self.won),
             "win_order": list(self.win_order),
+            "win_records": [
+                None
+                if record is None
+                else {
+                    "tile": None if record.tile is None else tile_to_str(record.tile),
+                    "kind": record.kind,
+                    "from_player": record.from_player,
+                }
+                for record in self.win_records
+            ],
             "rivers": [[tile_to_str(tile) for tile in river] for river in self.rivers],
             "swap_direction": self.swap_direction,
             "dice": list(self.dice) if self.dice is not None else None,

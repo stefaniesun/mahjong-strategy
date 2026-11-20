@@ -1,0 +1,7 @@
+# 测试固定使用的规则,不随 configs/rules.yaml(日常训练和对局的规则)变化。
+base_score: 1
+max_fan: 4
+self_draw_mode: add_di
+enable_heavenly_hand: false
+enable_earthly_hand: false
+enable_eighteen_arhats: false

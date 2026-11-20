@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import asdict
 
-from engine.config import RuleConfig
+from engine.config import RuleConfig, active_rule_config
 from engine.state import GameState
 from engine.tiles import Suit, tile_to_str
 from state.legality import legal_actions
@@ -13,17 +13,18 @@ from state.tile_counting import compute_seen_counts, compute_tile_statistics
 
 
 from state.visibility import (
-    hand_tiles_to_strings,
+    hidden_hand_tiles,
     meld_to_dict,
     players_in_relative_order,
     relative_position,
+    revealed_win_tile,
     tiles_to_strings,
     visible_concealed_hand,
 )
 
 
 def from_engine(engine_state: GameState, player_id: int, rule_config: RuleConfig | None = None) -> S2ProtocolState:
-    config = rule_config or RuleConfig()
+    config = rule_config or engine_state.rule_config or active_rule_config()
     players = [_player_view(engine_state, player, player_id) for player in players_in_relative_order(player_id)]
     facts = Facts(
         players=ObservedValue.observed(players),
@@ -108,8 +109,8 @@ def _player_view(engine_state: GameState, player: int, perspective_player: int) 
     return {
         "player_id": player,
         "relative_position": relative_position(player, perspective_player),
-        "concealed_hand": visible_concealed_hand(hand, is_self=is_self, has_won=engine_state.won[player]),
-        "hand_count": ObservedValue.observed(hand.size),
+        "concealed_hand": visible_concealed_hand(hand, is_self=is_self),
+        "hand_count": ObservedValue.observed(hand.size if is_self else len(hidden_hand_tiles(engine_state, player))),
         "melds": ObservedValue.observed([meld_to_dict(meld) for meld in hand.melds]),
         "rivers": ObservedValue.observed(tiles_to_strings(engine_state.rivers[player])),
         "void_suit": ObservedValue.observed(_suit_value(engine_state.void_suits[player])),
@@ -174,41 +175,12 @@ def _event_history(engine_state: GameState) -> list[dict]:
 
 
 def _revealed_win_hands(engine_state: GameState) -> dict[int, list[str]]:
-    return {
-        player: hand_tiles_to_strings(engine_state.hands[player])
-        for player, won in enumerate(engine_state.won)
-        if won
-    }
-
-
-
-
-
-def _seen_counts(engine_state: GameState, perspective_player: int) -> list[int]:
-    counts = [0] * 27
-    for tile in engine_state.hands[perspective_player].tiles():
-        counts[tile.index] += 1
-    for river in engine_state.rivers:
-        for tile in river:
-            counts[tile.index] += 1
-    for hand in engine_state.hands:
-        for meld in hand.melds:
-            for tile in meld.tiles:
-                counts[tile.index] += 1
-    for player, won in enumerate(engine_state.won):
-        if won:
-            for tile in engine_state.hands[player].tiles():
-                counts[tile.index] += 1
-    return counts
-
-
-def _unknown_pool_breakdown(engine_state: GameState, perspective_player: int) -> dict:
-    opponents = {
-        str(relative_position(player, perspective_player)): engine_state.hands[player].size
-        for player in range(4)
-        if player != perspective_player and not engine_state.won[player]
-    }
-    return {"wall": len(engine_state.wall), "opponents": opponents}
+    revealed = {}
+    for player in range(len(engine_state.won)):
+        tile = revealed_win_tile(engine_state, player)
+        if tile is not None:
+            revealed[player] = [tile_to_str(tile)]
+    return revealed
 
 
 def _rule_config_dict(config: RuleConfig) -> dict:

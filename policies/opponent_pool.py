@@ -8,7 +8,7 @@ from engine.actions import Action, ActionKind
 from engine.hand import Hand
 from engine.tiles import Suit
 from policies.base_policy import BasePolicy
-from policies.heuristics import choose_discard, choose_void_suit, visible_hand_and_void_suit
+from policies.heuristics import choose_discard, choose_swap_tiles, choose_void_suit, visible_hand_and_void_suit
 from policies.protocol_actions import actions_from_mask, validate_policy_action
 from policies.rule_policy import RulePolicy
 from state.protocol import S2ProtocolState
@@ -31,6 +31,23 @@ class RandomPolicy(BasePolicy):
     def choose_action(self, protocol_state: S2ProtocolState, legal_mask: Sequence[bool]) -> Action:
         action = self._rng.choice(actions_from_mask(legal_mask))
         return validate_policy_action(action, legal_mask)
+
+
+class PrincipledSwapPolicy(RulePolicy):
+    """遵循基本牌效原则的对手策略，不从合法动作中完全随机选择。"""
+
+    def _choose_swap(self, hand: Hand, legal_actions: Sequence[Action]) -> Action | None:
+        swaps = [action for action in legal_actions if action.kind is ActionKind.SWAP_THREE]
+        if not swaps:
+            return None
+        preferred = choose_swap_tiles(hand)
+        return min(
+            swaps,
+            key=lambda action: (
+                0 if tuple(sorted(action.tiles)) == tuple(sorted(preferred)) else 1,
+                tuple(tile.index for tile in action.tiles),
+            ),
+        )
 
 
 class GreedyPolicy(BasePolicy):
@@ -58,7 +75,8 @@ def create_standard_opponents() -> list[OpponentSpec]:
     return [
         OpponentSpec("random", "weak", "Random weak opponent", RandomPolicy, 0.20),
         OpponentSpec("greedy", "medium", "Greedy medium opponent", GreedyPolicy, 0.30),
-        OpponentSpec("s3_rule", "baseline", "S3 rule baseline opponent", RulePolicy, 0.50),
+        OpponentSpec("s3_rule", "baseline", "S3 rule baseline opponent", RulePolicy, 0.35),
+        OpponentSpec("principled_swap", "baseline", "Principled swap opponent", PrincipledSwapPolicy, 0.15),
     ]
 
 

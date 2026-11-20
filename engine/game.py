@@ -3,13 +3,14 @@ from __future__ import annotations
 import random
 
 from engine.actions import Action, ActionKind, legal_declare_void_actions, legal_swap_actions, swap_direction_from_dice_sum
+from engine.config import RuleConfig, active_rule_config
 from engine.fan_calc import WinContext, calculate_fan
 from engine.gang import GangKind
 from engine.hand import Hand
 from engine.meld import Meld, MeldKind
 from engine.settlement import apply_kong_transfer, record_kong_payment, settle_drawn_game, settle_win
 
-from engine.state import GameState, PendingDiscard, PendingRobKong
+from engine.state import GameState, PendingDiscard, PendingRobKong, WinRecord
 
 
 from engine.tiles import Tile, full_wall
@@ -17,9 +18,10 @@ from engine.win_check import can_win
 
 
 class Game:
-    def __init__(self, seed: int | None = None, dealer: int = 0):
+    def __init__(self, seed: int | None = None, dealer: int = 0, config: RuleConfig | None = None):
         self.seed = seed
         self.dealer = dealer
+        self.config = config or active_rule_config()
         self.rng = random.Random(seed)
         self.state: GameState | None = None
 
@@ -40,6 +42,7 @@ class Game:
             current_player=self.dealer,
             swap_direction=swap_direction_from_dice_sum(dice_sum),
             dice=dice,
+            rule_config=self.config,
         )
 
         return self.state
@@ -171,6 +174,7 @@ class Game:
 
         state.hands[player].remove(action.tile)
         state.rivers[player].append(action.tile)
+        state.last_drawn[player] = None
         state.pending_discard_after_kong = state.current_draw_after_kong
         state.pending_discard_last_wall = state.current_draw_last_wall
         state.current_draw_after_kong = False
@@ -198,10 +202,12 @@ class Game:
                 payer=pending.discarder,
                 hand=state.hands[player],
                 context=self._pending_discard_win_context(),
+                config=self.config,
             )
 
             self._apply_kong_transfer_if_needed(player)
             state.hands[player].remove(pending.tile)
+            state.win_records[player] = WinRecord(tile=pending.tile, kind="discard", from_player=pending.discarder)
 
             self._mark_winner(player)
             state.pending_winners.remove(player)
@@ -254,6 +260,7 @@ class Game:
         self._remove_last_river_tile(pending.discarder, action.tile)
         self._clear_pending_discard()
         state.current_player = player
+        state.last_drawn[player] = None
 
     def _step_exposed_kong(self, player: int, action: Action) -> None:
         state = self._require_state()
@@ -275,6 +282,7 @@ class Game:
             kong_player=player,
             kind=GangKind.EXPOSED,
             from_player=pending.discarder,
+            config=self.config,
         )
         state.next_gang_id += 1
         state.gang_records.append(record)
@@ -300,6 +308,8 @@ class Game:
                 gang_id=state.next_gang_id,
                 kong_player=player,
                 kind=GangKind.CONCEALED,
+                config=self.config,
+                active_players=self._active_players(),
             )
         elif action.kong_kind is GangKind.ADDED:
             if state.hands[player].count(action.tile) < 1:
@@ -324,6 +334,7 @@ class Game:
                 gang_id=state.next_gang_id,
                 kong_player=player,
                 kind=GangKind.ADDED,
+                config=self.config,
             )
 
         else:
@@ -373,14 +384,15 @@ class Game:
                 payer=pending.kong_player,
                 hand=state.hands[player],
                 context=WinContext(robbing_kong=True),
+                config=self.config,
             )
             state.hands[player].remove(pending.tile)
+            state.win_records[player] = WinRecord(tile=pending.tile, kind="rob_kong", from_player=pending.kong_player)
             self._mark_winner(player)
             pending.winners.remove(player)
+            pending.robbers.append(player)
             if not pending.winners:
-                state.pending_rob_kong = None
-                if not state.finished:
-                    self._advance_after_resolved_discard(pending.kong_player)
+                self._resolve_rob_kong(pending)
             return
         if action.kind is ActionKind.PASS:
             if player not in pending.winners:
@@ -389,16 +401,26 @@ class Game:
             state.passed_fan[player] = self._rob_kong_win_fan(player, pending.tile)
             pending.winners.remove(player)
             if not pending.winners:
-                state.pending_rob_kong = None
-                self._complete_added_kong(pending.kong_player, pending.tile)
+                self._resolve_rob_kong(pending)
             return
         raise ValueError("pending rob kong requires rob_kong_win or pass")
+
+    def _resolve_rob_kong(self, pending: PendingRobKong) -> None:
+        state = self._require_state()
+        state.pending_rob_kong = None
+        if not pending.robbers:
+            self._complete_added_kong(pending.kong_player, pending.tile)
+            return
+        # 杠被抢:这张牌作为胡牌张离开杠者手牌,碰保持不变,由杠者下家继续摸牌
+        state.hands[pending.kong_player].remove(pending.tile)
+        if not state.finished:
+            self._advance_after_resolved_discard(pending.kong_player)
 
     def _rob_kong_win_fan(self, player: int, tile: Tile) -> int:
         state = self._require_state()
         trial = Hand(counts=list(state.hands[player].counts), melds=list(state.hands[player].melds))
         trial.add(tile)
-        return calculate_fan(trial, WinContext(robbing_kong=True)).fan
+        return calculate_fan(trial, WinContext(robbing_kong=True), self.config).fan
 
     def _complete_added_kong(self, player: int, tile: Tile) -> None:
         state = self._require_state()
@@ -408,7 +430,7 @@ class Game:
         state.hands[player].remove(tile)
         old_meld = state.hands[player].melds[pong_index]
         state.hands[player].melds[pong_index] = Meld(MeldKind.KONG, (tile,) * 4, exposed=True, from_player=old_meld.from_player)
-        record = record_kong_payment(state.scores, gang_id=state.next_gang_id, kong_player=player, kind=GangKind.ADDED)
+        record = record_kong_payment(state.scores, gang_id=state.next_gang_id, kong_player=player, kind=GangKind.ADDED, config=self.config)
         state.next_gang_id += 1
         state.gang_records.append(record)
         self._draw_replacement_after_kong(player, record.gang_id)
@@ -420,7 +442,9 @@ class Game:
             raise ValueError("cannot draw replacement from empty wall")
         state.current_draw_after_kong = True
         state.current_draw_last_wall = len(state.wall) == 1
-        state.hands[player].add(state.wall.pop())
+        tile = state.wall.pop()
+        state.hands[player].add(tile)
+        state.last_drawn[player] = tile
         state.current_player = player
 
         state.last_transferable_gang_id = gang_id
@@ -446,8 +470,9 @@ class Game:
                 haidi=state.current_draw_last_wall,
             ),
             active_players=self._active_players(),
-
+            config=self.config,
         )
+        state.win_records[player] = WinRecord(tile=state.last_drawn[player], kind="self_draw", from_player=None)
         self._mark_winner(player)
         if not state.finished:
             self._advance_after_resolved_discard(player)
@@ -480,7 +505,7 @@ class Game:
         state = self._require_state()
         if not state.passed_hu_lock[player]:
             return True
-        fan = calculate_fan(hand, context).fan
+        fan = calculate_fan(hand, context, self.config).fan
         return fan > state.passed_fan[player]
 
 
@@ -489,7 +514,7 @@ class Game:
         state = self._require_state()
         trial = Hand(counts=list(state.hands[player].counts), melds=list(state.hands[player].melds))
         trial.add(tile)
-        return calculate_fan(trial, self._pending_discard_win_context()).fan
+        return calculate_fan(trial, self._pending_discard_win_context(), self.config).fan
 
     def _pending_discard_win_context(self) -> WinContext:
         state = self._require_state()
@@ -530,6 +555,7 @@ class Game:
                     won=state.won,
                     void_suits=state.void_suits,
                     gang_records=state.gang_records,
+                    config=self.config,
                 )
             state.finished = True
             state.phase = "finished"
@@ -555,7 +581,9 @@ class Game:
             return
         state.current_draw_after_kong = False
         state.current_draw_last_wall = len(state.wall) == 1
-        state.hands[next_player].add(state.wall.pop())
+        tile = state.wall.pop()
+        state.hands[next_player].add(tile)
+        state.last_drawn[next_player] = tile
         state.passed_hu_lock[next_player] = False
 
         state.passed_fan[next_player] = 0

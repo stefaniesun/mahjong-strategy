@@ -1,0 +1,199 @@
+{
+  "rules": {
+    "base_score": 1,
+    "max_fan": 3,
+    "self_draw_mode": "add_di",
+    "enable_heavenly_hand": false,
+    "enable_earthly_hand": false,
+    "enable_eighteen_arhats": false
+  },
+  "seed_start": 200000,
+  "variants": {
+    "smart_kong": {
+      "games": 2000,
+      "diff_mean": -0.065,
+      "ci95": [
+        -0.114,
+        -0.016
+      ],
+      "significant": false,
+      "changed_games": 64,
+      "score": [
+        0.0825,
+        0.0175
+      ],
+      "win_rate": [
+        0.7235,
+        0.73
+      ],
+      "self_draw_rate": [
+        0.2275,
+        0.2285
+      ],
+      "deal_in_per_game": [
+        0.456,
+        0.452
+      ],
+      "kongs_per_game": [
+        0.249,
+        0.2175
+      ],
+      "bad_games": 0
+    },
+    "pong_no_regress": {
+      "games": 2000,
+      "diff_mean": 0.041,
+      "ci95": [
+        -0.0957,
+        0.1777
+      ],
+      "significant": false,
+      "changed_games": 601,
+      "score": [
+        0.0825,
+        0.1235
+      ],
+      "win_rate": [
+        0.7235,
+        0.724
+      ],
+      "self_draw_rate": [
+        0.2275,
+        0.2245
+      ],
+      "deal_in_per_game": [
+        0.456,
+        0.4725
+      ],
+      "kongs_per_game": [
+        0.249,
+        0.275
+      ],
+      "bad_games": 0
+    },
+    "void_order": {
+      "games": 2000,
+      "diff_mean": -0.026,
+      "ci95": [
+        -0.0977,
+        0.0457
+      ],
+      "significant": false,
+      "changed_games": 221,
+      "score": [
+        0.0825,
+        0.0565
+      ],
+      "win_rate": [
+        0.7235,
+        0.718
+      ],
+      "self_draw_rate": [
+        0.2275,
+        0.2285
+      ],
+      "deal_in_per_game": [
+        0.456,
+        0.476
+      ],
+      "kongs_per_game": [
+        0.249,
+        0.2495
+      ],
+      "bad_games": 0
+    },
+    "live_tiebreak": {
+      "games": 2000,
+      "diff_mean": 0.061,
+      "ci95": [
+        -0.0624,
+        0.1844
+      ],
+      "significant": false,
+      "changed_games": 655,
+      "score": [
+        0.0825,
+        0.1435
+      ],
+      "win_rate": [
+        0.7235,
+        0.748
+      ],
+      "self_draw_rate": [
+        0.2275,
+        0.2465
+      ],
+      "deal_in_per_game": [
+        0.456,
+        0.422
+      ],
+      "kongs_per_game": [
+        0.249,
+        0.241
+      ],
+      "bad_games": 0
+    },
+    "safe_tiebreak": {
+      "games": 2000,
+      "diff_mean": 0.0305,
+      "ci95": [
+        -0.0718,
+        0.1328
+      ],
+      "significant": false,
+      "changed_games": 467,
+      "score": [
+        0.0825,
+        0.113
+      ],
+      "win_rate": [
+        0.7235,
+        0.733
+      ],
+      "self_draw_rate": [
+        0.2275,
+        0.2395
+      ],
+      "deal_in_per_game": [
+        0.456,
+        0.432
+      ],
+      "kongs_per_game": [
+        0.249,
+        0.2425
+      ],
+      "bad_games": 0
+    },
+    "all": {
+      "games": 2000,
+      "diff_mean": 0.051,
+      "ci95": [
+        -0.1298,
+        0.2318
+      ],
+      "significant": false,
+      "changed_games": 1190,
+      "score": [
+        0.0825,
+        0.1335
+      ],
+      "win_rate": [
+        0.7235,
+        0.7545
+      ],
+      "self_draw_rate": [
+        0.2275,
+        0.2535
+      ],
+      "deal_in_per_game": [
+        0.456,
+        0.4335
+      ],
+      "kongs_per_game": [
+        0.249,
+        0.228
+      ],
+      "bad_games": 0
+    }
+  }
+}

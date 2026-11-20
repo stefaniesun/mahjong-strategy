@@ -9,7 +9,7 @@ def test_load_default_rules_config():
 
     assert isinstance(config, RuleConfig)
     assert config.base_score == 1
-    assert config.max_fan == 4
+    assert config.max_fan == 3
     assert config.self_draw_mode == "add_di"
     assert config.enable_heavenly_hand is False
     assert config.enable_earthly_hand is False

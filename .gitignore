@@ -28,3 +28,7 @@ cloud_outputs/*/data/
 .idea/
 .DS_Store
 Thumbs.db
+
+# 辅助器回放等本地生成物
+outputs/
+.superpowers/

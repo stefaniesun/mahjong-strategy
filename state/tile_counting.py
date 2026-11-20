@@ -147,9 +147,7 @@ def _unknown_pool_breakdown(state: S2ProtocolState) -> dict[str, Any]:
     for player in state.facts.players.value or []:
         if player.get("relative_position") == 0:
             continue
-        won = player.get("won")
-        if isinstance(won, ObservedValue) and won.status is ObservationStatus.OBSERVED and won.value:
-            continue
+        # 胡牌者扣着的暗手牌同样是未知牌,hand_count 已扣除亮出的胡牌张
         hand_count = player.get("hand_count")
         if isinstance(hand_count, ObservedValue) and hand_count.status is ObservationStatus.OBSERVED:
             opponents[str(player["relative_position"])] = hand_count.value

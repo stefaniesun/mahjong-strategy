@@ -3,6 +3,7 @@ from __future__ import annotations
 from itertools import combinations
 from typing import Any
 
+from engine.config import RuleConfig
 from engine.fan_calc import WinContext, calculate_fan
 from engine.gang import GangKind
 from engine.hand import Hand
@@ -146,6 +147,14 @@ def _discard_win_action_if_legal(state: S2ProtocolState, player: dict[str, Any],
 
 
 
+def _rule_config(state: S2ProtocolState) -> RuleConfig | None:
+    """状态里记录的规则;未知时返回 None,由算番使用当前生效的规则。"""
+    value = state.rule_config
+    if value.status is ObservationStatus.UNKNOWN or not value.value:
+        return None
+    return RuleConfig(**value.value)
+
+
 def _win_action_with_lock(
     state: S2ProtocolState,
     player: dict[str, Any],
@@ -165,7 +174,7 @@ def _win_action_with_lock(
         return _conditional(action, "passed_hu_lock_unknown")
     if lock.value is False:
         return action
-    current_fan = calculate_fan(hand, WinContext(after_kong=after_kong, robbing_kong=robbing_kong, haidi=haidi)).fan
+    current_fan = calculate_fan(hand, WinContext(after_kong=after_kong, robbing_kong=robbing_kong, haidi=haidi), _rule_config(state)).fan
 
     if not isinstance(fan, ObservedValue) or fan.status is ObservationStatus.UNKNOWN:
         return _conditional(action, "passed_fan_unknown")

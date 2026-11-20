@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
@@ -8,6 +10,8 @@ import yaml
 
 
 SELF_DRAW_MODES = {"add_di", "add_fan"}
+DEFAULT_RULES_PATH = Path(__file__).resolve().parents[1] / "configs" / "rules.yaml"
+RULES_ENV = "MAHJONG_RULES"
 
 
 @dataclass(frozen=True)
@@ -48,3 +52,12 @@ def load_rule_config(path: str | Path) -> RuleConfig:
     if not isinstance(data, dict):
         raise ValueError("rules config must be a mapping")
     return RuleConfig.from_mapping(data)
+
+
+@lru_cache(maxsize=1)
+def active_rule_config() -> RuleConfig:
+    """当前生效的规则:环境变量 MAHJONG_RULES 指向的文件,否则是 configs/rules.yaml。
+
+    换规则重新训练只需要改这份配置;没有显式传规则的地方都读这里,所以各层不会各算各的。
+    """
+    return load_rule_config(os.environ.get(RULES_ENV) or DEFAULT_RULES_PATH)

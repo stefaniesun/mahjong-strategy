@@ -12,6 +12,7 @@ from engine.win_check import can_win
 from state.protocol import Beliefs, ObservationStatus, ObservedValue, S2ProtocolState
 
 from state.tile_counting import hypergeometric_location_prior
+from state.visibility import hidden_hand_tiles
 
 
 
@@ -245,9 +246,7 @@ def _oracle_tile_locations(engine_state: GameState, protocol_state: S2ProtocolSt
         if relative not in (1, 2, 3):
             continue
         player_id = player.get("player_id")
-        if engine_state.won[player_id]:
-            continue
-        for tile in engine_state.hands[player_id].tiles():
+        for tile in hidden_hand_tiles(engine_state, player_id):
             counts[tile.index][relative] += 1
         if engine_state.phase == "swap_three":
             for tile in engine_state.swap_choices[player_id] or ():
