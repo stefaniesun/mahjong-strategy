@@ -13,6 +13,10 @@ S4_POLICY = ROOT / "training_artifacts" / "S4" / "v5_20260718_encoder_v4" / "che
 def load_ai(kind: str, checkpoint: Path | None = None, s4_policy: Path = S4_POLICY) -> tuple[BasePolicy, str]:
     if kind == "rule":
         return RulePolicy(), "S3 规则 AI"
+    if kind == "rule_plus":
+        from policies.rule_policy_plus import PlusConfig, RulePlusPolicy
+
+        return RulePlusPolicy(PlusConfig.parse("all")), "S3+ 增强规则 AI"
     if kind == "s4":
         from policies.learned_policy import LearnedPolicy
 

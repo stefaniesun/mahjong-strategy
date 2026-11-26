@@ -82,7 +82,7 @@ def create_app(session: GameSession) -> FastAPI:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="四川麻将人机对局 + 打牌辅助器")
-    parser.add_argument("--ai", choices=["s4", "s5", "rule"], default="s4")
+    parser.add_argument("--ai", choices=["s4", "s5", "rule", "rule_plus"], default="s4")
     parser.add_argument("--checkpoint", type=Path, default=None)
     parser.add_argument("--port", type=int, default=8770)
     parser.add_argument("--seed", type=int, default=None, help="固定随机种子,便于复现")

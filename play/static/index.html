@@ -2065,16 +2065,26 @@
         const o = rep.opening_info.void_options.slice().sort((a, b) => a.shanten_without - b.shanten_without || a.count - b.count)[0];
         return `<div class="decision-hero"><div class="eyebrow">第一优先 · 定缺</div><h3>建议定缺 ${esc(SUIT_CN[o.suit] || o.suit)}</h3><div class="reason">${esc(rep.opening_info.void_criterion || '优先选择最容易清理的花色')}</div><div class="quick-actions"><div class="quick-action"><b>${o.count}</b>手里张数</div><div class="quick-action"><b>${o.shanten_without}</b>其余牌向听</div></div></div>`;
       }
+      const alerts = rep.sections?.alerts || [];
+      const winAlert = alerts.find(f => f.title.startsWith('可以自摸') || f.title.startsWith('可以胡') || f.title.startsWith('可以抢杠胡'));
+      if (winAlert) {
+        return `<div class="decision-hero"><div class="eyebrow">第一优先 · 胡牌</div><h3>${esc(winAlert.title)}</h3><div class="reason">${esc((winAlert.basis || []).join(' · ') || '满足胡牌条件')}</div></div>`;
+      }
       const info = rep.own_info;
       const evList = info?.mode === 'discard' ? (info.discard_v2_options?.length ? info.discard_v2_options : info.candidates) : null;
       const top = evList ? evList[0] : null;
       if (top) {
         const alternatives = (evList || []).slice(1, 3);
+        const endgameAlert = alerts.find(f => f.title.startsWith('残局'));
         const reasonTxt = top.ev_reason
-          ? `${top.ev_reason}${rep.flags?.defense_conflict ? ` · 攻防:求快${rep.flags.defense_conflict.speed}/求稳${rep.flags.defense_conflict.safe}` : ''}`
+          ? `${top.ev_reason}${rep.flags?.defense_conflict ? ` · 攻防:求快${rep.flags.defense_conflict.speed}/求稳${rep.flags.defense_conflict.safe}` : ''}${endgameAlert ? ' · ' + endgameAlert.title : ''}`
           : (rep.flags?.conflict ? `求快打 ${rep.flags.conflict.speed}，求番大打 ${rep.flags.conflict.fan}` : '综合进张效率、真实余牌与安全度');
         const riskTxt = top.safe_all ? '100%安全' : (top.dealin_prob !== undefined ? `${(top.dealin_prob * 100).toFixed(1)}%` : '—');
         return `<div class="decision-hero"><div class="eyebrow">第一优先 · 综合出牌 (discard_v2)</div><h3>建议打出 ${miniL(top.tile)}</h3><div class="reason">${esc(reasonTxt)}</div><div class="quick-actions"><div class="quick-action"><b>${top.shanten_after}</b>向听</div><div class="quick-action"><b>${top.live}</b>张有效牌</div><div class="quick-action"><b>${riskTxt}</b>点炮风险</div>${alternatives.map(a => `<div class="quick-action secondary"><b>${miniL(a.tile)}</b>备选</div>`).join('')}</div></div>`;
+      }
+      const tactAlert = alerts.find(f => f.title.startsWith('碰') || f.title.startsWith('明杠') || f.title.startsWith('暗杠') || f.title.startsWith('补杠'));
+      if (tactAlert) {
+        return `<div class="decision-hero"><div class="eyebrow">第一优先 · 碰/杠参谋</div><h3>${esc(tactAlert.title)}</h3><div class="reason">${esc((tactAlert.basis || []).slice(0, 2).join(' · '))}</div></div>`;
       }
       return `<div class="decision-hero"><div class="eyebrow">当前决策</div><h3>请查看下方提示</h3><div class="reason">先处理确定性提醒，再展开详细分析。</div></div>`;
     }
@@ -2093,7 +2103,7 @@
         if (rep.flags.conflict) flags.push(`<span class="flag">求快打${esc(rep.flags.conflict.speed)},求番大打${esc(rep.flags.conflict.fan)}</span>`);
         if (rep.flags.defense_conflict) flags.push(`<span class="flag">攻防:求快打${esc(rep.flags.defense_conflict.speed)},求稳打${esc(rep.flags.defense_conflict.safe)}</span>`);
         const displayList = (info.discard_v2_options && info.discard_v2_options.length) ? info.discard_v2_options : info.candidates;
-        const rows = displayList.map(c => `<tr data-row-tile="${fromLabel(c.tile)}"><td>${miniL(c.tile)}</td><td>${c.shanten_after}</td><td>${c.useful_kinds}种 <b>${c.live}</b>张</td>
+        const rows = displayList.map(c => `<tr data-row-tile="${fromLabel(c.tile)}" title="${esc(c.ev_reason || '')}"><td>${miniL(c.tile)}</td><td>${c.shanten_after}</td><td>${c.useful_kinds}种 <b>${c.live}</b>张</td>
       <td>${c.max_fan === null ? '—' : c.max_fan + '番' + (c.dead_wait ? ' <span class="err">死听</span>' : '')}</td>
       <td class="${c.safe_all ? 'safe' : (c.dealin_prob >= 0.12 ? 'err' : 'p3')}">${c.safe_all ? '安全' : (c.dealin_prob !== undefined ? (c.dealin_prob * 100).toFixed(1) + '%' : '—')}</td>
       <td class="p3"><b>${c.ev_score !== undefined ? c.ev_score.toFixed(2) : '—'}</b></td>
@@ -2180,7 +2190,8 @@
         }).join('')}</tbody></table>`;
       }
       if (info && info.void_v3_options) {
-        body += `<div class="criterion" style="margin-top:8px">定缺(void_v3):${esc(info.void_v3_criterion || '')}</div><table class="t"><thead><tr><th>缺</th><th>张数</th><th>向听</th><th>有效进张</th><th>流向备注</th></tr></thead><tbody>${info.void_v3_options.map(o => `<tr><td><b>${esc(o.suit)}</b></td><td>${o.void_cnt}</td><td>${o.shanten}</td><td><b>${o.live}</b></td><td>${esc(o.ctx_note || '—')}</td></tr>`).join('')}</tbody></table>`;
+        const canVoid = Boolean(view.decision && view.decision.void && view.decision.void.length);
+        body += `<div class="criterion" style="margin-top:8px">定缺(void_v3${canVoid ? ' · 点击行直接定缺' : ''}):${esc(info.void_v3_criterion || '')}</div><table class="t"><thead><tr><th>缺</th><th>张数</th><th>向听</th><th>有效进张</th><th>流向备注</th></tr></thead><tbody>${info.void_v3_options.map(o => `<tr${canVoid ? ` class="clickable" onclick="declareVoid('${o.suit_code}')"` : ''}><td><b>${esc(o.suit)}</b></td><td>${o.void_cnt}</td><td>${o.shanten}</td><td><b>${o.live}</b></td><td>${esc(o.ctx_note || '—')}</td></tr>`).join('')}</tbody></table>`;
       } else if (info && info.void_options) {
         body += `<div class="criterion" style="margin-top:8px">定缺:${esc(info.void_criterion)}</div><table class="t"><thead><tr><th>缺</th><th>这门张数</th><th>其余牌向听</th></tr></thead><tbody>${info.void_options.map(o => `<tr><td>${esc(o.suit)}</td><td>${o.count}</td><td>${o.shanten_without}</td></tr>`).join('')}</tbody></table>`;
       }
