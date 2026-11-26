@@ -198,8 +198,14 @@ class GameSession:
                     break
                 self._step(HUMAN, legal[0])
             else:
-                decision = choose_policy_action(self.state, actor, self.ai)
-                self._step(actor, decision.action)
+                if hasattr(self.ai, "choose_from_game"):
+                    action = self.ai.choose_from_game(
+                        self.state, self.recorder, actor, self.game.legal_actions(actor)
+                    )
+                    self._step(actor, action)
+                else:
+                    decision = choose_policy_action(self.state, actor, self.ai)
+                    self._step(actor, decision.action)
             if len(self.events) > before:
                 break
         return self.events[before:]

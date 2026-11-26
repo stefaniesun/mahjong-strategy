@@ -17,6 +17,10 @@ def load_ai(kind: str, checkpoint: Path | None = None, s4_policy: Path = S4_POLI
         from policies.rule_policy_plus import PlusConfig, RulePlusPolicy
 
         return RulePlusPolicy(PlusConfig.parse("all")), "S3+ 增强规则 AI"
+    if kind == "assistant":
+        from assistant.bot import AssistantPolicy
+
+        return AssistantPolicy(stochastic=True), "辅助器全套 AI (v2/v3)"
     if kind == "s4":
         from policies.learned_policy import LearnedPolicy
 
