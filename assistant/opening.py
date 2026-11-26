@@ -9,12 +9,17 @@ from assistant.report import Finding, certain, counted, probable
 from assistant.state import AssistantState
 from assistant.swap_v2 import choose_void_v2, score_swap_candidates_v2
 from assistant.tiles import label, labels, seat_name, suit_label, suit_of, tidx
+from assistant.void_v3 import score_void_candidates_v3
 from state.hand_analysis import shanten
 
 CRITERION_SWAP = "按换后四家定缺盘面综合代价从低到高排序(综合换后向听、缺门包袱与防卡壳退路、清一色/根潜力及送牌防守代价)"
 CRITERION_VOID = "先看缺掉这门后剩下的牌的向听数(少的在前),再看这门的张数(少的在前,打光得快)"
+CRITERION_VOID_V3 = "综合缺后向听、缺门清牌包袱、留牌有效进张宽度、暗刻/暗杠根基，并在平手胶着局面结合换牌流向防单行道"
 ASSUMPTION_SWAP_V2 = (
     "按 280 万局正常玩家模拟标定的进牌花色倾向(我方某门牌越多,外池对手越易将其作短门换入)及拆牌模板估算换后定缺盘面。"
+)
+ASSUMPTION_VOID_V3 = (
+    "按 4,000 局定缺瞬间供需与 1,750 局全盘配对大样本校准：优先保证向听与有效进张宽度，并在平手局面用换牌流向降低放单行道概率。"
 )
 
 
@@ -160,12 +165,31 @@ def analyze_opening(state: AssistantState) -> tuple[dict, list[Finding]]:
             )
         rows.sort(key=lambda r: (r["shanten_without"], r["count"]))
         v2_suit = suit_label(choose_void_v2(hand, is_dealer=is_dealer).value)
-        info.update(void_options=rows, void_criterion=CRITERION_VOID, void_v2_pick=v2_suit)
+
+        swap_out_code = suit_of(tidx(state.swap.given[0])) if (state.swap and state.swap.given) else None
+        swap_in_code = suit_of(tidx(state.swap.received[0])) if (state.swap and state.swap.received) else None
+        v3_rows = score_void_candidates_v3(
+            hand.counts,
+            is_dealer=is_dealer,
+            swap_out_suit=swap_out_code,
+            swap_in_suit=swap_in_code,
+            swap_direction=state.swap_direction,
+        )
+        v3_suit = v3_rows[0]["suit"]
+
+        info.update(
+            void_options=rows,
+            void_criterion=CRITERION_VOID,
+            void_v2_pick=v2_suit,
+            void_v3_options=v3_rows,
+            void_v3_pick=v3_suit,
+            void_v3_criterion=CRITERION_VOID_V3,
+        )
         basis = [f"排序标准:{CRITERION_VOID}"] + [
             f"缺{r['suit']}:这门 {r['count']} 张,其余牌向听 {r['shanten_without']}" for r in rows
         ]
-        if v2_suit != rows[0]["suit"]:
-            basis.append(f"注:若计入缺门张数清牌耗时,缺{v2_suit}起步包袱更轻,可权衡向听与张数")
+        if v3_suit != rows[0]["suit"]:
+            basis.append(f"注:综合进张宽度、清牌耗时与换牌流向,void_v3 更推荐缺{v3_suit}")
         findings.append(
             counted(
                 "opening",
@@ -173,6 +197,21 @@ def analyze_opening(state: AssistantState) -> tuple[dict, list[Finding]]:
                 basis,
             )
         )
+        if state.phase == "declare_void":
+            top_v3 = v3_rows[0]
+            v3_basis = [f"排序标准:{CRITERION_VOID_V3}"] + [
+                f"缺{r['suit']}:综合代价 {r['total_cost']:.2f} | {r['void_cnt']} 张, 其余牌向听 {r['shanten']}, 有效进张 {r['live']} 张"
+                + (f" | {r['ctx_note']}" if r["ctx_note"] else "")
+                for r in v3_rows
+            ]
+            findings.append(
+                probable(
+                    "opening",
+                    f"定缺推荐(void_v3): 缺{top_v3['suit']} ({top_v3['void_cnt']}张, 向听 {top_v3['shanten']}, 有效进张 {top_v3['live']} 张)",
+                    v3_basis,
+                    assumption=ASSUMPTION_VOID_V3,
+                )
+            )
     return info, findings
 
 
