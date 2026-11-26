@@ -1,18 +1,35 @@
-"""开局:换三张、定缺;对局中:换牌去向追踪。"""
+"""开局:换三张(基于 280 万局模拟校准的 swap_v2 盘面评估)、定缺;对局中:换牌去向追踪。"""
 from __future__ import annotations
 
-from engine.actions import legal_swap_actions
 from engine.hand import Hand
 from engine.tiles import SUITS
 
 from assistant.known_holdings import floor_text, swap_floors
-from assistant.report import Finding, certain, counted
+from assistant.report import Finding, certain, counted, probable
 from assistant.state import AssistantState
+from assistant.swap_v2 import choose_void_v2, score_swap_candidates_v2
 from assistant.tiles import label, labels, seat_name, suit_label, suit_of, tidx
 from state.hand_analysis import shanten
 
-CRITERION_SWAP = "先看换出后留下的牌的向听数(少的在前),再看换出那门剩下的张数(少的在前,定缺后好打光)"
+CRITERION_SWAP = "按换后四家定缺盘面综合代价从低到高排序(综合换后向听、缺门包袱与防卡壳退路、清一色/根潜力及送牌防守代价)"
 CRITERION_VOID = "先看缺掉这门后剩下的牌的向听数(少的在前),再看这门的张数(少的在前,打光得快)"
+ASSUMPTION_SWAP_V2 = (
+    "按 280 万局正常玩家模拟标定的进牌花色倾向(我方某门牌越多,外池对手越易将其作短门换入)及拆牌模板估算换后定缺盘面。"
+)
+
+
+def _swap_context(state: AssistantState, hand_size: int) -> tuple[bool, bool, str | None]:
+    is_dealer = (state.dealer == state.perspective) if state.dealer is not None else (hand_size == 14)
+    if state.swap_direction is None:
+        return is_dealer, False, None
+    recv_seat = (state.perspective - state.swap_direction) % 4
+    recv_name = seat_name(recv_seat, state.perspective)
+    recv_is_dealer = (
+        (state.dealer == recv_seat)
+        if state.dealer is not None
+        else (state.players[recv_seat].hidden_count == 14)
+    )
+    return is_dealer, recv_is_dealer, recv_name
 
 
 def analyze_opening(state: AssistantState) -> tuple[dict, list[Finding]]:
@@ -20,36 +37,116 @@ def analyze_opening(state: AssistantState) -> tuple[dict, list[Finding]]:
     findings: list[Finding] = []
     suit_counts = {suit.value: sum(1 for t in hand.tiles() if t.suit is suit) for suit in SUITS}
     info: dict = {"suit_counts": {suit_label(k): v for k, v in suit_counts.items()}}
+    is_dealer, recv_is_dealer, recv_name = _swap_context(state, hand.size)
 
     if state.phase == "swap_three":
+        scored = score_swap_candidates_v2(
+            hand.counts,
+            is_dealer=is_dealer,
+            receiver_is_dealer=recv_is_dealer,
+            swap_direction=state.swap_direction,
+        )
         rows = []
-        for action in legal_swap_actions(hand):
-            rest = Hand(counts=list(hand.counts))
-            for tile in action.tiles:
-                rest.remove(tile)
-            suit = action.tiles[0].suit
+        for item in scored:
             rows.append(
                 {
-                    "tiles": [label(t.index) for t in action.tiles],
-                    "suit": suit_label(suit.value),
-                    "shanten_rest": shanten(rest),
-                    "suit_left": sum(1 for t in rest.tiles() if t.suit is suit),
-                    "_order": tuple(t.index for t in action.tiles),
+                    "tiles": [label(idx) for idx in item["tile_indices"]],
+                    "suit": suit_label(item["suit_code"]),
+                    "shanten_rest": item["shanten_rest"],
+                    "suit_left": item["suit_left"],
+                    "total_cost": round(item["total_cost"], 3),
+                    "self_cost": round(item["self_cost"], 3),
+                    "gift_cost": round(item["gift_cost"], 3),
+                    "gift_shape": item["gift_shape"],
+                    "exp_shanten": item["exp_shanten"],
+                    "exp_void_cnt": item["exp_void_cnt"],
+                    "exp_live": item["exp_live"],
+                    "exp_jam_rate": item["exp_jam_rate"],
+                    "exp_flush_rate": item["exp_flush_rate"],
                 }
             )
-        rows.sort(key=lambda r: (r["shanten_rest"], r["suit_left"], r["_order"]))
-        for row in rows:
-            row.pop("_order")
-        info.update(swap_options=rows, swap_criterion=CRITERION_SWAP)
+
+        conflict_info = None
+        conflict_text = None
         if rows:
+            top = rows[0]
+            # 1) 搏清一色备选路线检测
+            flush_cands = [
+                r for r in rows[1:]
+                if r["total_cost"] <= top["total_cost"] + 0.35
+                and r["exp_flush_rate"] - top["exp_flush_rate"] >= 0.18
+            ]
+            # 2) 纯防守不喂牌备选路线检测(相对当前首选可明显降低送牌风险且盘面差距很小)
+            safe_cands = [
+                r for r in rows[1:]
+                if top["gift_cost"] - r["gift_cost"] >= 0.045
+                and r["total_cost"] <= top["total_cost"] + 0.12
+            ]
+            if flush_cands:
+                alt = max(flush_cands, key=lambda r: (r["exp_flush_rate"], -r["total_cost"]))
+                conflict_info = {"type": "flush", "main": top["tiles"], "alt": alt["tiles"]}
+                conflict_text = (
+                    f"路线权衡:求稳换 {'、'.join(top['tiles'])}(预计向听{top['exp_shanten']}),"
+                    f"搏清一色换 {'、'.join(alt['tiles'])}(清一色苗头约{alt['exp_flush_rate']:.0%})"
+                )
+            elif safe_cands:
+                alt = min(safe_cands, key=lambda r: r["total_cost"])
+                who_txt = f"{recv_name}{'庄家' if recv_is_dealer else ''}" if recv_name else "对手"
+                conflict_info = {"type": "defense", "main": top["tiles"], "alt": alt["tiles"]}
+                conflict_text = (
+                    f"攻防权衡:综合换 {'、'.join(top['tiles'])}(送{top['gift_shape']}),"
+                    f"重点防{who_txt}可换 {'、'.join(alt['tiles'])}(送{alt['gift_shape']})"
+                )
+
+        info.update(
+            swap_options=rows,
+            swap_criterion=CRITERION_SWAP,
+            swap_target=recv_name,
+            swap_target_is_dealer=recv_is_dealer,
+            swap_conflict=conflict_info,
+            swap_conflict_text=conflict_text,
+        )
+
+        if rows:
+            top = rows[0]
+            target_desc = (
+                f"本局换给{recv_name}({'14张庄家,已加重防喂权重' if recv_is_dealer else '闲家'})"
+                if recv_name
+                else "换牌方向未指定(按闲家基准评估)"
+            )
+            findings.append(
+                probable(
+                    "opening",
+                    f"换三张推荐:换出 {'、'.join(top['tiles'])} (送{top['gift_shape']},换后预计向听 {top['exp_shanten']},预计缺门 {top['exp_void_cnt']} 张)",
+                    [
+                        f"排序标准:{CRITERION_SWAP}",
+                        target_desc,
+                    ]
+                    + [
+                        f"换出 {'、'.join(r['tiles'])}:综合代价 {r['total_cost']:.2f} | 预计向听 {r['exp_shanten']},缺门 {r['exp_void_cnt']} 张(卡壳率 {r['exp_jam_rate']:.0%})"
+                        + (f",清一色苗 {r['exp_flush_rate']:.0%}" if r["exp_flush_rate"] >= 0.1 else "")
+                        + f" | 送{r['gift_shape']}"
+                        for r in rows[:5]
+                    ],
+                    assumption=ASSUMPTION_SWAP_V2,
+                )
+            )
             findings.append(
                 counted(
                     "opening",
-                    f"换三张:按标准排第一的是换出 {'、'.join(rows[0]['tiles'])}",
-                    [f"排序标准:{CRITERION_SWAP}", f"共 {len(rows)} 种合法换法;收到的 3 张未知,向听按留下的 {hand.size - 3} 张计算"]
-                    + [f"换出 {'、'.join(r['tiles'])}:留牌向听 {r['shanten_rest']},{r['suit']}还剩 {r['suit_left']} 张" for r in rows[:4]],
+                    f"合法换法共 {len(rows)} 种;首选换出后留牌 {hand.size - 3} 张向听 {top['shanten_rest']},{top['suit']}剩 {top['suit_left']} 张",
+                    [f"各门初始张数:{'、'.join(f'{k}{v}张' for k, v in info['suit_counts'].items())}"],
                 )
             )
+            if conflict_text:
+                findings.append(
+                    probable(
+                        "opening",
+                        conflict_text,
+                        ["两种方案综合盘面差距不大,可根据当前场况分差选择求稳快胡、搏大番或防守"],
+                        assumption=ASSUMPTION_SWAP_V2,
+                    )
+                )
 
     if state.phase in ("swap_three", "declare_void"):
         rows = []
@@ -62,12 +159,18 @@ def analyze_opening(state: AssistantState) -> tuple[dict, list[Finding]]:
                 }
             )
         rows.sort(key=lambda r: (r["shanten_without"], r["count"]))
-        info.update(void_options=rows, void_criterion=CRITERION_VOID)
+        v2_suit = suit_label(choose_void_v2(hand, is_dealer=is_dealer).value)
+        info.update(void_options=rows, void_criterion=CRITERION_VOID, void_v2_pick=v2_suit)
+        basis = [f"排序标准:{CRITERION_VOID}"] + [
+            f"缺{r['suit']}:这门 {r['count']} 张,其余牌向听 {r['shanten_without']}" for r in rows
+        ]
+        if v2_suit != rows[0]["suit"]:
+            basis.append(f"注:若计入缺门张数清牌耗时,缺{v2_suit}起步包袱更轻,可权衡向听与张数")
         findings.append(
             counted(
                 "opening",
                 f"定缺:按标准排第一的是缺{rows[0]['suit']}",
-                [f"排序标准:{CRITERION_VOID}"] + [f"缺{r['suit']}:这门 {r['count']} 张,其余牌向听 {r['shanten_without']}" for r in rows],
+                basis,
             )
         )
     return info, findings

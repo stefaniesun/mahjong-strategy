@@ -89,4 +89,6 @@ def build_state(
         passed_fan=s.passed_fan[perspective],
         swap=swap,
         rule_config=rule_config or s.rule_config or active_rule_config(),
+        swap_direction=s.swap_direction,
+        dealer=s.dealer,
     )

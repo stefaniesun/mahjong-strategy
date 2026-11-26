@@ -77,6 +77,8 @@ class AssistantState:
     passed_fan: int = 0
     swap: SwapInfo | None = None
     rule_config: RuleConfig = field(default_factory=active_rule_config)
+    swap_direction: int | None = None
+    dealer: int | None = None
 
     def __post_init__(self) -> None:
         if len(self.players) != SEATS or any(view.seat != seat for seat, view in enumerate(self.players)):

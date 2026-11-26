@@ -1,139 +1,472 @@
 <!doctype html>
 <html lang="zh-CN">
+
 <head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>打牌辅助器回放</title>
-<style>
-:root {
-  --bg: #f6f5f1; --panel: #ffffff; --ink: #1f2328; --muted: #6b7178; --line: #e3e1da;
-  --t1: #1e7f4f; --t1-bg: #e6f4ec; --t2: #2357a8; --t2-bg: #e7eefa; --t3: #a3620b; --t3-bg: #fbf1df;
-  --wan: #b3261e; --tiao: #1e7f4f; --bing: #2357a8; --hi: #fff6cc; --bad: #b3261e;
-}
-@media (prefers-color-scheme: dark) {
-  :root {
-    --bg: #15171a; --panel: #1d2024; --ink: #e8e6e1; --muted: #9aa0a6; --line: #2e3237;
-    --t1: #6fd19c; --t1-bg: #17301f; --t2: #8fb3f0; --t2-bg: #1a2638; --t3: #e8b45c; --t3-bg: #33270f;
-    --wan: #ef7a72; --tiao: #6fd19c; --bing: #8fb3f0; --hi: #3a3416; --bad: #ef7a72;
-  }
-}
-* { box-sizing: border-box; }
-body { margin: 0; background: var(--bg); color: var(--ink); font: 14px/1.55 -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif; }
-header { position: sticky; top: 0; z-index: 5; background: var(--panel); border-bottom: 1px solid var(--line); padding: 10px 16px; display: flex; flex-wrap: wrap; gap: 12px; align-items: center; }
-header h1 { font-size: 16px; margin: 0 8px 0 0; }
-header .meta { color: var(--muted); }
-header .nav { display: flex; gap: 8px; align-items: center; margin-left: auto; }
-header button { border: 1px solid var(--line); background: var(--bg); color: var(--ink); border-radius: 6px; padding: 4px 12px; cursor: pointer; font-size: 14px; }
-header input[type=range] { width: 220px; }
-main { display: grid; grid-template-columns: minmax(320px, 5fr) 7fr; gap: 16px; padding: 16px; max-width: 1500px; margin: 0 auto; }
-@media (max-width: 960px) { main { grid-template-columns: 1fr; } header .nav { margin-left: 0; } }
-.panel { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; margin-bottom: 16px; }
-.panel h2 { font-size: 15px; margin: 0 0 10px; display: flex; gap: 8px; align-items: baseline; }
-.panel h2 small { color: var(--muted); font-weight: normal; font-size: 12px; }
-.tile { display: inline-block; min-width: 2.3em; text-align: center; padding: 1px 4px; margin: 1px 2px 1px 0; border: 1px solid var(--line); border-radius: 4px; background: var(--bg); font-weight: 600; }
-.tile.w { color: var(--wan); } .tile.t { color: var(--tiao); } .tile.b { color: var(--bing); }
-.seat { border-top: 1px dashed var(--line); padding: 8px 0; }
-.seat:first-of-type { border-top: none; }
-.seat .head { display: flex; gap: 8px; flex-wrap: wrap; align-items: baseline; }
-.seat .name { font-weight: 700; }
-.chip { font-size: 12px; padding: 0 6px; border-radius: 10px; background: var(--bg); border: 1px solid var(--line); color: var(--muted); }
-.chip.won { color: var(--t1); border-color: var(--t1); }
-.chip.me { color: var(--t2); border-color: var(--t2); }
-.row-label { color: var(--muted); font-size: 12px; margin-right: 4px; }
-.action { background: var(--hi); border-radius: 8px; padding: 8px 10px; margin-top: 8px; }
-.legend { display: flex; gap: 10px; flex-wrap: wrap; font-size: 12px; color: var(--muted); margin-bottom: 4px; }
-.badge { display: inline-block; font-size: 12px; font-weight: 700; padding: 0 6px; border-radius: 4px; margin-right: 6px; white-space: nowrap; }
-.tier1 .badge, .badge.t1 { color: var(--t1); background: var(--t1-bg); }
-.tier2 .badge, .badge.t2 { color: var(--t2); background: var(--t2-bg); }
-.tier3 .badge, .badge.t3 { color: var(--t3); background: var(--t3-bg); }
-.finding { padding: 6px 0; border-top: 1px solid var(--line); }
-.finding:first-child { border-top: none; }
-.finding.tier3 { background: var(--t3-bg); border-radius: 6px; padding: 6px 8px; margin: 4px 0; border-top: none; }
-.finding details { margin: 2px 0 0 4px; color: var(--muted); font-size: 13px; }
-.finding details summary { cursor: pointer; }
-.finding ul { margin: 4px 0 0; padding-left: 18px; }
-.assume { font-size: 12px; color: var(--t3); margin-top: 2px; }
-table { border-collapse: collapse; width: 100%; font-size: 13px; }
-th, td { border-bottom: 1px solid var(--line); padding: 4px 6px; text-align: center; white-space: nowrap; }
-th { color: var(--muted); font-weight: 600; }
-tr.chosen td { background: var(--hi); }
-td.safe { color: var(--t1); font-weight: 700; }
-td.p3, span.p3 { color: var(--t3); }
-.scroll { overflow-x: auto; }
-.criterion { color: var(--muted); font-size: 12px; margin: 2px 0 6px; }
-.flag { display: inline-block; margin: 2px 6px 6px 0; padding: 2px 8px; border-radius: 6px; font-size: 12px; background: var(--t2-bg); color: var(--t2); }
-.grid9 { display: grid; grid-template-columns: 2.4em repeat(9, 1fr); gap: 3px; font-size: 12px; }
-.grid9 .cell { border: 1px solid var(--line); border-radius: 4px; text-align: center; padding: 2px 0; }
-.grid9 .cell b { display: block; font-size: 15px; }
-.grid9 .cell.zero { background: var(--bg); color: var(--muted); }
-.grid9 .cell .wall { color: var(--t3); font-size: 11px; }
-.grid9 .suit { display: flex; align-items: center; justify-content: center; font-weight: 700; }
-.winner { border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; margin: 8px 0; }
-.muted { color: var(--muted); }
-.error { color: var(--bad); font-weight: 700; }
-footer { max-width: 1500px; margin: 0 auto; padding: 0 16px 24px; color: var(--muted); font-size: 13px; }
-</style>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>打牌辅助器回放</title>
+  <style>
+    :root {
+      --bg: #f6f5f1;
+      --panel: #ffffff;
+      --ink: #1f2328;
+      --muted: #6b7178;
+      --line: #e3e1da;
+      --t1: #1e7f4f;
+      --t1-bg: #e6f4ec;
+      --t2: #2357a8;
+      --t2-bg: #e7eefa;
+      --t3: #a3620b;
+      --t3-bg: #fbf1df;
+      --wan: #b3261e;
+      --tiao: #1e7f4f;
+      --bing: #2357a8;
+      --hi: #fff6cc;
+      --bad: #b3261e;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #15171a;
+        --panel: #1d2024;
+        --ink: #e8e6e1;
+        --muted: #9aa0a6;
+        --line: #2e3237;
+        --t1: #6fd19c;
+        --t1-bg: #17301f;
+        --t2: #8fb3f0;
+        --t2-bg: #1a2638;
+        --t3: #e8b45c;
+        --t3-bg: #33270f;
+        --wan: #ef7a72;
+        --tiao: #6fd19c;
+        --bing: #8fb3f0;
+        --hi: #3a3416;
+        --bad: #ef7a72;
+      }
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--ink);
+      font: 14px/1.55 -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
+    }
+
+    header {
+      position: sticky;
+      top: 0;
+      z-index: 5;
+      background: var(--panel);
+      border-bottom: 1px solid var(--line);
+      padding: 10px 16px;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+      align-items: center;
+    }
+
+    header h1 {
+      font-size: 16px;
+      margin: 0 8px 0 0;
+    }
+
+    header .meta {
+      color: var(--muted);
+    }
+
+    header .nav {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      margin-left: auto;
+    }
+
+    header button {
+      border: 1px solid var(--line);
+      background: var(--bg);
+      color: var(--ink);
+      border-radius: 6px;
+      padding: 4px 12px;
+      cursor: pointer;
+      font-size: 14px;
+    }
+
+    header input[type=range] {
+      width: 220px;
+    }
+
+    main {
+      display: grid;
+      grid-template-columns: minmax(320px, 5fr) 7fr;
+      gap: 16px;
+      padding: 16px;
+      max-width: 1500px;
+      margin: 0 auto;
+    }
+
+    @media (max-width: 960px) {
+      main {
+        grid-template-columns: 1fr;
+      }
+
+      header .nav {
+        margin-left: 0;
+      }
+    }
+
+    .panel {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 14px 16px;
+      margin-bottom: 16px;
+    }
+
+    .panel h2 {
+      font-size: 15px;
+      margin: 0 0 10px;
+      display: flex;
+      gap: 8px;
+      align-items: baseline;
+    }
+
+    .panel h2 small {
+      color: var(--muted);
+      font-weight: normal;
+      font-size: 12px;
+    }
+
+    .tile {
+      display: inline-block;
+      min-width: 2.3em;
+      text-align: center;
+      padding: 1px 4px;
+      margin: 1px 2px 1px 0;
+      border: 1px solid var(--line);
+      border-radius: 4px;
+      background: var(--bg);
+      font-weight: 600;
+    }
+
+    .tile.w {
+      color: var(--wan);
+    }
+
+    .tile.t {
+      color: var(--tiao);
+    }
+
+    .tile.b {
+      color: var(--bing);
+    }
+
+    .seat {
+      border-top: 1px dashed var(--line);
+      padding: 8px 0;
+    }
+
+    .seat:first-of-type {
+      border-top: none;
+    }
+
+    .seat .head {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      align-items: baseline;
+    }
+
+    .seat .name {
+      font-weight: 700;
+    }
+
+    .chip {
+      font-size: 12px;
+      padding: 0 6px;
+      border-radius: 10px;
+      background: var(--bg);
+      border: 1px solid var(--line);
+      color: var(--muted);
+    }
+
+    .chip.won {
+      color: var(--t1);
+      border-color: var(--t1);
+    }
+
+    .chip.me {
+      color: var(--t2);
+      border-color: var(--t2);
+    }
+
+    .row-label {
+      color: var(--muted);
+      font-size: 12px;
+      margin-right: 4px;
+    }
+
+    .action {
+      background: var(--hi);
+      border-radius: 8px;
+      padding: 8px 10px;
+      margin-top: 8px;
+    }
+
+    .legend {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      font-size: 12px;
+      color: var(--muted);
+      margin-bottom: 4px;
+    }
+
+    .badge {
+      display: inline-block;
+      font-size: 12px;
+      font-weight: 700;
+      padding: 0 6px;
+      border-radius: 4px;
+      margin-right: 6px;
+      white-space: nowrap;
+    }
+
+    .tier1 .badge,
+    .badge.t1 {
+      color: var(--t1);
+      background: var(--t1-bg);
+    }
+
+    .tier2 .badge,
+    .badge.t2 {
+      color: var(--t2);
+      background: var(--t2-bg);
+    }
+
+    .tier3 .badge,
+    .badge.t3 {
+      color: var(--t3);
+      background: var(--t3-bg);
+    }
+
+    .finding {
+      padding: 6px 0;
+      border-top: 1px solid var(--line);
+    }
+
+    .finding:first-child {
+      border-top: none;
+    }
+
+    .finding.tier3 {
+      background: var(--t3-bg);
+      border-radius: 6px;
+      padding: 6px 8px;
+      margin: 4px 0;
+      border-top: none;
+    }
+
+    .finding details {
+      margin: 2px 0 0 4px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .finding details summary {
+      cursor: pointer;
+    }
+
+    .finding ul {
+      margin: 4px 0 0;
+      padding-left: 18px;
+    }
+
+    .assume {
+      font-size: 12px;
+      color: var(--t3);
+      margin-top: 2px;
+    }
+
+    table {
+      border-collapse: collapse;
+      width: 100%;
+      font-size: 13px;
+    }
+
+    th,
+    td {
+      border-bottom: 1px solid var(--line);
+      padding: 4px 6px;
+      text-align: center;
+      white-space: nowrap;
+    }
+
+    th {
+      color: var(--muted);
+      font-weight: 600;
+    }
+
+    tr.chosen td {
+      background: var(--hi);
+    }
+
+    td.safe {
+      color: var(--t1);
+      font-weight: 700;
+    }
+
+    td.p3,
+    span.p3 {
+      color: var(--t3);
+    }
+
+    .scroll {
+      overflow-x: auto;
+    }
+
+    .criterion {
+      color: var(--muted);
+      font-size: 12px;
+      margin: 2px 0 6px;
+    }
+
+    .flag {
+      display: inline-block;
+      margin: 2px 6px 6px 0;
+      padding: 2px 8px;
+      border-radius: 6px;
+      font-size: 12px;
+      background: var(--t2-bg);
+      color: var(--t2);
+    }
+
+    .grid9 {
+      display: grid;
+      grid-template-columns: 2.4em repeat(9, 1fr);
+      gap: 3px;
+      font-size: 12px;
+    }
+
+    .grid9 .cell {
+      border: 1px solid var(--line);
+      border-radius: 4px;
+      text-align: center;
+      padding: 2px 0;
+    }
+
+    .grid9 .cell b {
+      display: block;
+      font-size: 15px;
+    }
+
+    .grid9 .cell.zero {
+      background: var(--bg);
+      color: var(--muted);
+    }
+
+    .grid9 .cell .wall {
+      color: var(--t3);
+      font-size: 11px;
+    }
+
+    .grid9 .suit {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 700;
+    }
+
+    .winner {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 8px 10px;
+      margin: 8px 0;
+    }
+
+    .muted {
+      color: var(--muted);
+    }
+
+    .error {
+      color: var(--bad);
+      font-weight: 700;
+    }
+
+    footer {
+      max-width: 1500px;
+      margin: 0 auto;
+      padding: 0 16px 24px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+  </style>
 </head>
+
 <body>
-<header>
-  <h1>打牌辅助器 · 回放</h1>
-  <span class="meta" id="meta"></span>
-  <div class="nav">
-    <button id="prev" title="上一个决策点(←)">◀</button>
-    <input type="range" id="slider" min="0" value="0">
-    <button id="next" title="下一个决策点(→)">▶</button>
-    <span id="pos" class="meta"></span>
-  </div>
-</header>
-<main>
-  <div id="left"></div>
-  <div id="right"></div>
-</main>
-<footer id="footer"></footer>
-<script id="replay-data" type="application/json">__REPLAY_DATA__</script>
-<script>
-const DATA = JSON.parse(document.getElementById('replay-data').textContent);
-const frames = DATA.frames;
-let cur = 0;
+  <header>
+    <h1>打牌辅助器 · 回放</h1>
+    <span class="meta" id="meta"></span>
+    <div class="nav">
+      <button id="prev" title="上一个决策点(←)">◀</button>
+      <input type="range" id="slider" min="0" value="0">
+      <button id="next" title="下一个决策点(→)">▶</button>
+      <span id="pos" class="meta"></span>
+    </div>
+  </header>
+  <main>
+    <div id="left"></div>
+    <div id="right"></div>
+  </main>
+  <footer id="footer"></footer>
+  <script id="replay-data" type="application/json">__REPLAY_DATA__</script>
+  <script>
+    const DATA = JSON.parse(document.getElementById('replay-data').textContent);
+    const frames = DATA.frames;
+    let cur = 0;
 
-const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-const suitClass = t => ({'万':'w','条':'t','筒':'b'})[String(t).slice(-1)] || '';
-const tile = t => `<span class="tile ${suitClass(t)}">${esc(t)}</span>`;
-const tiles = list => list.map(tile).join('');
-const pct = p => (p * 100).toFixed(0) + '%';
-const TIER = {1: ['确定', 't1'], 2: ['计数', 't2'], 3: ['概率', 't3']};
+    const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+    const suitClass = t => ({ '万': 'w', '条': 't', '筒': 'b' })[String(t).slice(-1)] || '';
+    const tile = t => `<span class="tile ${suitClass(t)}">${esc(t)}</span>`;
+    const tiles = list => list.map(tile).join('');
+    const pct = p => (p * 100).toFixed(0) + '%';
+    const TIER = { 1: ['确定', 't1'], 2: ['计数', 't2'], 3: ['概率', 't3'] };
 
-function finding(f) {
-  const [name] = TIER[f.tier];
-  const basis = f.basis && f.basis.length
-    ? `<details><summary>依据(${f.basis.length})</summary><ul>${f.basis.map(b => `<li>${esc(b)}</li>`).join('')}</ul></details>` : '';
-  const assume = f.assumption ? `<div class="assume">假设:${esc(f.assumption)}</div>` : '';
-  return `<div class="finding tier${f.tier}"><span class="badge">${name}</span>${esc(f.title)}${basis}${assume}</div>`;
-}
+    function finding(f) {
+      const [name] = TIER[f.tier];
+      const basis = f.basis && f.basis.length
+        ? `<details><summary>依据(${f.basis.length})</summary><ul>${f.basis.map(b => `<li>${esc(b)}</li>`).join('')}</ul></details>` : '';
+      const assume = f.assumption ? `<div class="assume">假设:${esc(f.assumption)}</div>` : '';
+      return `<div class="finding tier${f.tier}"><span class="badge">${name}</span>${esc(f.title)}${basis}${assume}</div>`;
+    }
 
-function findingsBlock(list, collapsedLabel) {
-  if (!list || !list.length) return '';
-  if (!collapsedLabel) return list.map(finding).join('');
-  return `<details><summary class="muted">${esc(collapsedLabel)}(${list.length})</summary>${list.map(finding).join('')}</details>`;
-}
+    function findingsBlock(list, collapsedLabel) {
+      if (!list || !list.length) return '';
+      if (!collapsedLabel) return list.map(finding).join('');
+      return `<details><summary class="muted">${esc(collapsedLabel)}(${list.length})</summary>${list.map(finding).join('')}</details>`;
+    }
 
-function renderTable(fr) {
-  const t = fr.table;
-  const order = ['上家', '对家', '下家', '自己'];
-  const seats = [...t.seats].sort((a, b) => order.indexOf(a.name) - order.indexOf(b.name));
-  const seatHtml = seats.map(s => {
-    const chips = [];
-    if (s.name === '自己') chips.push('<span class="chip me">你</span>');
-    chips.push(`<span class="chip">${s.void ? '缺' + esc(s.void) : '定缺未知'}</span>`);
-    if (s.won) chips.push(`<span class="chip won">已胡 ${tile(s.win ? s.win.tile : '?')} ${esc(s.win ? s.win.how : '')}</span>`);
-    chips.push(`<span class="chip">分数 ${s.score}</span>`);
-    if (s.name !== '自己') chips.push(`<span class="chip">扣着 ${s.hidden} 张</span>`);
-    const melds = s.melds.length ? `<div><span class="row-label">副露</span>${s.melds.map(m => `${esc(m.kind)}${tile(m.tile)}`).join(' ')}</div>` : '';
-    const river = `<div><span class="row-label">牌河</span>${s.river.length ? tiles(s.river) : '<span class="muted">—</span>'}</div>`;
-    return `<div class="seat"><div class="head"><span class="name">${esc(s.name)}</span>${chips.join('')}</div>${melds}${river}</div>`;
-  }).join('');
-  const pending = t.pending ? `<div><span class="row-label">待响应</span>${esc(t.pending)}</div>` : '';
-  return `
+    function renderTable(fr) {
+      const t = fr.table;
+      const order = ['上家', '对家', '下家', '自己'];
+      const seats = [...t.seats].sort((a, b) => order.indexOf(a.name) - order.indexOf(b.name));
+      const seatHtml = seats.map(s => {
+        const chips = [];
+        if (s.name === '自己') chips.push('<span class="chip me">你</span>');
+        chips.push(`<span class="chip">${s.void ? '缺' + esc(s.void) : '定缺未知'}</span>`);
+        if (s.won) chips.push(`<span class="chip won">已胡 ${tile(s.win ? s.win.tile : '?')} ${esc(s.win ? s.win.how : '')}</span>`);
+        chips.push(`<span class="chip">分数 ${s.score}</span>`);
+        if (s.name !== '自己') chips.push(`<span class="chip">扣着 ${s.hidden} 张</span>`);
+        const melds = s.melds.length ? `<div><span class="row-label">副露</span>${s.melds.map(m => `${esc(m.kind)}${tile(m.tile)}`).join(' ')}</div>` : '';
+        const river = `<div><span class="row-label">牌河</span>${s.river.length ? tiles(s.river) : '<span class="muted">—</span>'}</div>`;
+        return `<div class="seat"><div class="head"><span class="name">${esc(s.name)}</span>${chips.join('')}</div>${melds}${river}</div>`;
+      }).join('');
+      const pending = t.pending ? `<div><span class="row-label">待响应</span>${esc(t.pending)}</div>` : '';
+      return `
   <div class="panel">
     <h2>牌桌 <small>${esc(t.phase)} · 牌墙 ${t.wall} 张 · 轮到${esc(t.current)}</small></h2>
     ${pending}
@@ -142,144 +475,145 @@ function renderTable(fr) {
     <div class="action"><b>这一手实际打法(S3 规则 AI):</b>${esc(fr.action)}
       <div class="muted" style="font-size:12px">可选:${fr.legal.map(esc).join(' / ')}</div></div>
   </div>`;
-}
+    }
 
-function renderOwn(rep, fr) {
-  const info = rep.own_info;
-  const list = rep.sections.own_hand || [];
-  if (!info) return '';
-  let body = '';
-  if (info.mode === 'discard') {
-    const chosen = fr.action.startsWith('打 ') ? fr.action.slice(2) : null;
-    const flags = [];
-    if (rep.flags.tie && rep.flags.tie.length) flags.push(`<span class="flag">并列:${rep.flags.tie.map(esc).join('、')}</span>`);
-    if (rep.flags.conflict) flags.push(`<span class="flag">标准冲突:求快打${esc(rep.flags.conflict.speed)},求番大打${esc(rep.flags.conflict.fan)}</span>`);
-    const rows = info.candidates.map(c => `
+    function renderOwn(rep, fr) {
+      const info = rep.own_info;
+      const list = rep.sections.own_hand || [];
+      if (!info) return '';
+      let body = '';
+      if (info.mode === 'discard') {
+        const chosen = fr.action.startsWith('打 ') ? fr.action.slice(2) : null;
+        const flags = [];
+        if (rep.flags.tie && rep.flags.tie.length) flags.push(`<span class="flag">并列:${rep.flags.tie.map(esc).join('、')}</span>`);
+        if (rep.flags.conflict) flags.push(`<span class="flag">标准冲突:求快打${esc(rep.flags.conflict.speed)},求番大打${esc(rep.flags.conflict.fan)}</span>`);
+        const rows = info.candidates.map(c => `
       <tr class="${c.tile === chosen ? 'chosen' : ''}">
         <td>${tile(c.tile)}</td><td>${c.shanten_after}</td><td>${c.useful_kinds}</td><td><b>${c.live}</b></td>
         <td>${c.max_fan === null ? '—' : c.max_fan + ' 番' + (c.dead_wait ? ' <span class="error">死听</span>' : '')}</td>
         <td class="p3">${pct(c.p_next)}</td><td class="p3">${pct(c.p_before_end)}</td></tr>`).join('');
-    body = `<div class="criterion">排序标准:${esc(info.criterion)}</div>${flags.join('')}
+        body = `<div class="criterion">排序标准:${esc(info.criterion)}</div>${flags.join('')}
       <div class="scroll"><table><thead><tr><th>打出</th><th>打后向听</th><th>进张种类</th><th>进张剩余</th><th>听牌后最大番</th><th><span class="badge t3">概率</span>下一摸进张</th><th><span class="badge t3">概率</span>流局前至少一张</th></tr></thead>
       <tbody>${rows}</tbody></table></div>
       <div class="criterion">按"求番大"标准的顺序:${info.order_by_fan.slice(0, 6).map(esc).join(' › ')}</div>`;
-  } else {
-    const useful = (info.useful || []).map(u => `${tile(u.tile)}<small class="muted">剩${u.remaining}</small>`).join(' ');
-    body = `<div>向听 <b>${info.shanten}</b> · 有效进张实际剩余 <b>${info.live}</b> 张</div><div style="margin:4px 0">${useful || '<span class="muted">无</span>'}</div>`;
-    if (info.waits && info.waits.length) {
-      body += `<table><thead><tr><th>听</th><th>剩余</th><th>番数</th><th>点炮得分</th><th>自摸每家</th></tr></thead><tbody>${
-        info.waits.map(w => `<tr><td>${tile(w.tile)}</td><td>${w.remaining}</td><td>${w.fan}</td><td>${w.ron_score}</td><td>${w.tsumo_each}</td></tr>`).join('')}</tbody></table>`;
+      } else {
+        const useful = (info.useful || []).map(u => `${tile(u.tile)}<small class="muted">剩${u.remaining}</small>`).join(' ');
+        body = `<div>向听 <b>${info.shanten}</b> · 有效进张实际剩余 <b>${info.live}</b> 张</div><div style="margin:4px 0">${useful || '<span class="muted">无</span>'}</div>`;
+        if (info.waits && info.waits.length) {
+          body += `<table><thead><tr><th>听</th><th>剩余</th><th>番数</th><th>点炮得分</th><th>自摸每家</th></tr></thead><tbody>${info.waits.map(w => `<tr><td>${tile(w.tile)}</td><td>${w.remaining}</td><td>${w.fan}</td><td>${w.ron_score}</td><td>${w.tsumo_each}</td></tr>`).join('')}</tbody></table>`;
+        }
+      }
+      return `<div class="panel"><h2>自己的牌</h2>${body}<div style="margin-top:8px">${findingsBlock(list, '全部结论')}</div></div>`;
     }
-  }
-  return `<div class="panel"><h2>自己的牌</h2>${body}<div style="margin-top:8px">${findingsBlock(list, '全部结论')}</div></div>`;
-}
 
-function renderDanger(rep) {
-  const rows = rep.danger_rows || [];
-  if (!rows.length) return '';
-  const names = rows[0].per_opponent.map(e => e.name);
-  const body = rows.map(r => `<tr><td>${tile(r.tile)}</td>${r.per_opponent.map(e => {
-    if (e.safe) return `<td class="safe" title="${e.reason === 'void' ? '对方定缺这门' : e.reason === 'holds_void' ? '他还拿着你换给他的缺门牌,打出之前不能胡' : '所有等待形状都被堵死'}">100% 安全</td>`;
-    const possible = e.shapes.filter(s => s.possible);
-    const tip = possible.map(s => `${s.name}(${s.tiles.join('、')})${s.hold_prob !== undefined ? ' 约' + pct(s.hold_prob) : ''}`).join('\n');
-    return `<td title="${esc(tip)}">${possible.length} 种形状 <span class="p3">≈${pct(e.any_shape_prob || 0)}</span></td>`;
-  }).join('')}</tr>`).join('');
-  const certainOnly = (rep.sections.danger || []).filter(f => f.tier === 1);
-  const rest = (rep.sections.danger || []).filter(f => f.tier !== 1);
-  return `<div class="panel"><h2>安全度 <small>对每家在场对手;鼠标停在格子上看具体形状</small></h2>
+    function renderDanger(rep) {
+      const rows = rep.danger_rows || [];
+      if (!rows.length) return '';
+      const names = rows[0].per_opponent.map(e => e.name);
+      const body = rows.map(r => `<tr><td>${tile(r.tile)}</td>${r.per_opponent.map(e => {
+        if (e.safe) return `<td class="safe" title="${e.reason === 'void' ? '对方定缺这门' : e.reason === 'holds_void' ? '他还拿着你换给他的缺门牌,打出之前不能胡' : '所有等待形状都被堵死'}">100% 安全</td>`;
+        const possible = e.shapes.filter(s => s.possible);
+        const tip = possible.map(s => `${s.name}(${s.tiles.join('、')})${s.hold_prob !== undefined ? ' 约' + pct(s.hold_prob) : ''}`).join('\n');
+        return `<td title="${esc(tip)}">${possible.length} 种形状 <span class="p3">≈${pct(e.any_shape_prob || 0)}</span></td>`;
+      }).join('')}</tr>`).join('');
+      const certainOnly = (rep.sections.danger || []).filter(f => f.tier === 1);
+      const rest = (rep.sections.danger || []).filter(f => f.tier !== 1);
+      return `<div class="panel"><h2>安全度 <small>对每家在场对手;鼠标停在格子上看具体形状</small></h2>
     <div class="scroll"><table><thead><tr><th>你的牌</th>${names.map(n => `<th>${esc(n)}</th>`).join('')}</tr></thead><tbody>${body}</tbody></table></div>
     <div class="assume">"≈X%" 是概率档:按未知牌随机分布估算"他手里有能等这张的搭子"的概率,不等于他已听牌,也不等于点炮概率。</div>
     ${findingsBlock(certainOnly, '确定结论')}${findingsBlock(rest, '计数与概率结论')}</div>`;
-}
-
-function renderWinners(rep) {
-  const items = rep.winners || [];
-  if (!items.length) return '';
-  const list = rep.sections.winners || [];
-  const cards = items.map(w => {
-    let extra = '';
-    if (w.status === 'complete') {
-      extra = `<div>可能组合 <b>${w.candidate_count}</b> 种${w.joint ? '(已与另一名胡牌者联合约束)' : ''}</div>
-        <details><summary class="muted">按权重列出前 ${w.candidates.length} 种</summary><table><tbody>${
-          w.candidates.map(c => `<tr><td style="text-align:left">${esc(c.hand)}</td><td class="p3">${pct(c.weight)}</td></tr>`).join('')}</tbody></table></details>`;
-      if (w.hold_prob) extra += `<div class="p3" style="font-size:13px">${w.hold_prob.map(h => `有${esc(h.tile)} ${pct(h.prob)}`).join(' · ')}</div>`;
-    } else if (w.status === 'too_many') {
-      extra = '<div class="muted">可能组合太多,暂不展开(余牌少了会自动展开)</div>';
-    } else if (w.status === 'no_candidate') {
-      extra = '<div class="error">找不到任何能胡的组合,牌面信息可能有误</div>';
-    } else {
-      extra = '<div class="muted">胡牌张不确定,无法反推</div>';
     }
-    return `<div class="winner"><b>${esc(w.name)}</b> ${esc(w.how)} ${tile(w.tile)} · 扣着 ${w.hidden_count} 张${extra}</div>`;
-  }).join('');
-  return `<div class="panel"><h2>已胡者手牌反推</h2>${cards}${findingsBlock(list, '全部结论')}</div>`;
-}
 
-function renderRemaining(rep) {
-  const rows = rep.remaining || [];
-  if (!rows.length) return '';
-  const suits = ['万', '条', '筒'];
-  let grid = '<div class="grid9"><div></div>' + [1,2,3,4,5,6,7,8,9].map(n => `<div class="muted" style="text-align:center">${n}</div>`).join('');
-  suits.forEach((s, si) => {
-    grid += `<div class="suit tile ${suitClass(s)}">${s}</div>`;
-    for (let r = 0; r < 9; r++) {
-      const row = rows[si * 9 + r];
-      grid += `<div class="cell ${row.unseen === 0 ? 'zero' : ''}" title="已现:${esc(row.seen_from || '无')}"><b>${row.unseen === 0 ? '绝' : row.unseen}</b><span class="wall">墙≈${row.wall_expected}</span></div>`;
+    function renderWinners(rep) {
+      const items = rep.winners || [];
+      if (!items.length) return '';
+      const list = rep.sections.winners || [];
+      const cards = items.map(w => {
+        let extra = '';
+        if (w.status === 'complete') {
+          extra = `<div>可能组合 <b>${w.candidate_count}</b> 种${w.joint ? '(已与另一名胡牌者联合约束)' : ''}</div>
+        <details><summary class="muted">按权重列出前 ${w.candidates.length} 种</summary><table><tbody>${w.candidates.map(c => `<tr><td style="text-align:left">${esc(c.hand)}</td><td class="p3">${pct(c.weight)}</td></tr>`).join('')}</tbody></table></details>`;
+          if (w.hold_prob) extra += `<div class="p3" style="font-size:13px">${w.hold_prob.map(h => `有${esc(h.tile)} ${pct(h.prob)}`).join(' · ')}</div>`;
+        } else if (w.status === 'too_many') {
+          extra = '<div class="muted">可能组合太多,暂不展开(余牌少了会自动展开)</div>';
+        } else if (w.status === 'no_candidate') {
+          extra = '<div class="error">找不到任何能胡的组合,牌面信息可能有误</div>';
+        } else {
+          extra = '<div class="muted">胡牌张不确定,无法反推</div>';
+        }
+        return `<div class="winner"><b>${esc(w.name)}</b> ${esc(w.how)} ${tile(w.tile)} · 扣着 ${w.hidden_count} 张${extra}</div>`;
+      }).join('');
+      return `<div class="panel"><h2>已胡者手牌反推</h2>${cards}${findingsBlock(list, '全部结论')}</div>`;
     }
-  });
-  grid += '</div>';
-  return `<div class="panel"><h2>余牌 <small>格子里是还没出现的张数;"墙≈"是概率档的牌墙期望张数</small></h2>${grid}
+
+    function renderRemaining(rep) {
+      const rows = rep.remaining || [];
+      if (!rows.length) return '';
+      const suits = ['万', '条', '筒'];
+      let grid = '<div class="grid9"><div></div>' + [1, 2, 3, 4, 5, 6, 7, 8, 9].map(n => `<div class="muted" style="text-align:center">${n}</div>`).join('');
+      suits.forEach((s, si) => {
+        grid += `<div class="suit tile ${suitClass(s)}">${s}</div>`;
+        for (let r = 0; r < 9; r++) {
+          const row = rows[si * 9 + r];
+          grid += `<div class="cell ${row.unseen === 0 ? 'zero' : ''}" title="已现:${esc(row.seen_from || '无')}"><b>${row.unseen === 0 ? '绝' : row.unseen}</b><span class="wall">墙≈${row.wall_expected}</span></div>`;
+        }
+      });
+      grid += '</div>';
+      return `<div class="panel"><h2>余牌 <small>格子里是还没出现的张数;"墙≈"是概率档的牌墙期望张数</small></h2>${grid}
     <div style="margin-top:8px">${findingsBlock(rep.sections.remaining || [])}</div></div>`;
-}
+    }
 
-function renderOpening(rep) {
-  const info = rep.opening_info;
-  const list = rep.sections.opening || [];
-  if (!info && !list.length) return '';
-  let body = '';
-  if (info && info.swap_options) {
-    body += `<div class="criterion">换三张排序标准:${esc(info.swap_criterion)}</div><table><thead><tr><th>换出</th><th>留牌向听</th><th>该门剩余</th></tr></thead><tbody>${
-      info.swap_options.slice(0, 8).map(o => `<tr><td>${tiles(o.tiles)}</td><td>${o.shanten_rest}</td><td>${o.suit_left}</td></tr>`).join('')}</tbody></table>`;
-  }
-  if (info && info.void_options) {
-    body += `<div class="criterion" style="margin-top:8px">定缺排序标准:${esc(info.void_criterion)}</div><table><thead><tr><th>缺</th><th>这门张数</th><th>其余牌向听</th></tr></thead><tbody>${
-      info.void_options.map(o => `<tr><td>${esc(o.suit)}</td><td>${o.count}</td><td>${o.shanten_without}</td></tr>`).join('')}</tbody></table>`;
-  }
-  return `<div class="panel"><h2>${info ? '开局' : '换牌去向'}</h2>${body}${findingsBlock(list)}</div>`;
-}
+    function renderOpening(rep) {
+      const info = rep.opening_info;
+      const list = rep.sections.opening || [];
+      if (!info && !list.length) return '';
+      let body = '';
+      if (info && info.swap_options) {
+        const flagHtml = info.swap_conflict_text ? `<div><span class="flag">${esc(info.swap_conflict_text)}</span></div>` : '';
+        const hasV2 = info.swap_options[0] && info.swap_options[0].exp_shanten !== undefined;
+        body += `<div class="criterion">换三张排序标准:${esc(info.swap_criterion)}</div>${flagHtml}` + (hasV2
+          ? `<table><thead><tr><th>换出</th><th><span class="badge t3">概率</span>预计向听</th><th><span class="badge t3">概率</span>预计缺门</th><th>清一色苗</th><th>送牌评估</th><th>留牌向听</th></tr></thead><tbody>${info.swap_options.slice(0, 8).map(o => `<tr><td>${tiles(o.tiles)}</td><td class="p3">${o.exp_shanten}</td><td class="p3">${o.exp_void_cnt}张</td><td class="p3">${o.exp_flush_rate >= 0.1 ? pct(o.exp_flush_rate) : '—'}</td><td>${esc(o.gift_shape)}</td><td>${o.shanten_rest}(剩${o.suit_left})</td></tr>`).join('')}</tbody></table>`
+          : `<table><thead><tr><th>换出</th><th>留牌向听</th><th>该门剩余</th></tr></thead><tbody>${info.swap_options.slice(0, 8).map(o => `<tr><td>${tiles(o.tiles)}</td><td>${o.shanten_rest}</td><td>${o.suit_left}</td></tr>`).join('')}</tbody></table>`);
+      }
+      if (info && info.void_options) {
+        body += `<div class="criterion" style="margin-top:8px">定缺排序标准:${esc(info.void_criterion)}</div><table><thead><tr><th>缺</th><th>这门张数</th><th>其余牌向听</th></tr></thead><tbody>${info.void_options.map(o => `<tr><td>${esc(o.suit)}</td><td>${o.count}</td><td>${o.shanten_without}</td></tr>`).join('')}</tbody></table>`;
+      }
+      return `<div class="panel"><h2>${info ? '开局' : '换牌去向'}</h2>${body}${findingsBlock(list)}</div>`;
+    }
 
-function render() {
-  const fr = frames[cur];
-  const rep = fr.report;
-  document.getElementById('pos').textContent = `第 ${cur + 1} / ${frames.length} 个决策点 · 报告用时 ${rep.elapsed_ms} ms`;
-  document.getElementById('slider').value = cur;
-  document.getElementById('left').innerHTML = renderTable(fr);
-  let right = `<div class="legend"><span><span class="badge t1">确定</span>铁定成立</span><span><span class="badge t2">计数</span>精确数出来的</span><span><span class="badge t3">概率</span>在写明的假设下算出</span></div>`;
-  if (rep.errors && rep.errors.length) right += `<div class="panel">${(rep.sections.alerts || []).map(finding).join('')}</div>`;
-  else {
-    const alerts = rep.sections.alerts || [];
-    if (alerts.length) right += `<div class="panel"><h2>规则提醒</h2>${alerts.map(finding).join('')}</div>`;
-    const body = renderOwn(rep, fr) + renderDanger(rep) + renderWinners(rep) + renderRemaining(rep);
-    right += rep.opening_info ? renderOpening(rep) + body : body + renderOpening(rep);
-  }
-  document.getElementById('right').innerHTML = right;
-}
+    function render() {
+      const fr = frames[cur];
+      const rep = fr.report;
+      document.getElementById('pos').textContent = `第 ${cur + 1} / ${frames.length} 个决策点 · 报告用时 ${rep.elapsed_ms} ms`;
+      document.getElementById('slider').value = cur;
+      document.getElementById('left').innerHTML = renderTable(fr);
+      let right = `<div class="legend"><span><span class="badge t1">确定</span>铁定成立</span><span><span class="badge t2">计数</span>精确数出来的</span><span><span class="badge t3">概率</span>在写明的假设下算出</span></div>`;
+      if (rep.errors && rep.errors.length) right += `<div class="panel">${(rep.sections.alerts || []).map(finding).join('')}</div>`;
+      else {
+        const alerts = rep.sections.alerts || [];
+        if (alerts.length) right += `<div class="panel"><h2>规则提醒</h2>${alerts.map(finding).join('')}</div>`;
+        const body = renderOwn(rep, fr) + renderDanger(rep) + renderWinners(rep) + renderRemaining(rep);
+        right += rep.opening_info ? renderOpening(rep) + body : body + renderOpening(rep);
+      }
+      document.getElementById('right').innerHTML = right;
+    }
 
-function go(i) { cur = Math.max(0, Math.min(frames.length - 1, i)); render(); }
+    function go(i) { cur = Math.max(0, Math.min(frames.length - 1, i)); render(); }
 
-document.getElementById('meta').textContent = `种子 ${DATA.seed} · 视角 ${DATA.player} 号位`;
-const slider = document.getElementById('slider');
-slider.max = Math.max(0, frames.length - 1);
-slider.addEventListener('input', e => go(+e.target.value));
-document.getElementById('prev').onclick = () => go(cur - 1);
-document.getElementById('next').onclick = () => go(cur + 1);
-document.addEventListener('keydown', e => { if (e.key === 'ArrowLeft') go(cur - 1); if (e.key === 'ArrowRight') go(cur + 1); });
+    document.getElementById('meta').textContent = `种子 ${DATA.seed} · 视角 ${DATA.player} 号位`;
+    const slider = document.getElementById('slider');
+    slider.max = Math.max(0, frames.length - 1);
+    slider.addEventListener('input', e => go(+e.target.value));
+    document.getElementById('prev').onclick = () => go(cur - 1);
+    document.getElementById('next').onclick = () => go(cur + 1);
+    document.addEventListener('keydown', e => { if (e.key === 'ArrowLeft') go(cur - 1); if (e.key === 'ArrowRight') go(cur + 1); });
 
-const sum = DATA.summary;
-document.getElementById('footer').innerHTML = `对局结果:${Object.entries(sum.scores).map(([k, v]) => `${esc(k)} ${v > 0 ? '+' : ''}${v}`).join(' · ')}
+    const sum = DATA.summary;
+    document.getElementById('footer').innerHTML = `对局结果:${Object.entries(sum.scores).map(([k, v]) => `${esc(k)} ${v > 0 ? '+' : ''}${v}`).join(' · ')}
   ;胡牌:${sum.wins.map(w => `${esc(w.name)}${w.self_draw ? '自摸' : '胡'}${esc(w.tile)}`).join('、') || '无'}`;
 
-if (frames.length) render(); else document.getElementById('right').innerHTML = '<div class="panel">这一局该视角没有需要做选择的决策点。</div>';
-</script>
+    if (frames.length) render(); else document.getElementById('right').innerHTML = '<div class="panel">这一局该视角没有需要做选择的决策点。</div>';
+  </script>
 </body>
+
 </html>

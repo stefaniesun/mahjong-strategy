@@ -32,8 +32,9 @@ def test_swap_options_list_every_legal_same_suit_triple():
         tiles = [t for t in own if t.endswith(suit)]
         expected += len(set(combinations(sorted(tiles), 3)))
     assert len(info["swap_options"]) == expected
-    keys = [(r["shanten_rest"], r["suit_left"]) for r in info["swap_options"]]
+    keys = [r["total_cost"] for r in info["swap_options"]]
     assert keys == sorted(keys)
+    assert all("exp_shanten" in r and "gift_shape" in r and "shanten_rest" in r for r in info["swap_options"])
 
 
 def test_alerts_void_tiles_pass_lock_and_self_win():
