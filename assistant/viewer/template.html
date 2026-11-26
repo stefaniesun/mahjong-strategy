@@ -488,14 +488,16 @@
         if (rep.flags.tie && rep.flags.tie.length) flags.push(`<span class="flag">并列:${rep.flags.tie.map(esc).join('、')}</span>`);
         if (rep.flags.conflict) flags.push(`<span class="flag">标准冲突:求快打${esc(rep.flags.conflict.speed)},求番大打${esc(rep.flags.conflict.fan)}</span>`);
         if (rep.flags.defense_conflict) flags.push(`<span class="flag" style="background:var(--t3-bg);color:var(--t3)">攻防权衡:求快打${esc(rep.flags.defense_conflict.speed)},求稳打${esc(rep.flags.defense_conflict.safe)}</span>`);
-        const rows = info.candidates.map(c => `
+        const displayList = (info.discard_v2_options && info.discard_v2_options.length) ? info.discard_v2_options : info.candidates;
+        const rows = displayList.map(c => `
       <tr class="${c.tile === chosen ? 'chosen' : ''}">
         <td>${tile(c.tile)}</td><td>${c.shanten_after}</td><td>${c.useful_kinds}</td><td><b>${c.live}</b></td>
         <td>${c.max_fan === null ? '—' : c.max_fan + ' 番' + (c.dead_wait ? ' <span class="error">死听</span>' : '')}</td>
         <td class="${c.safe_all ? 'safe' : 'p3'}">${c.safe_all ? '100%安全' : (c.dealin_prob !== undefined ? (c.dealin_prob * 100).toFixed(1) + '% ' + esc(c.risk_label || '') : '—')}</td>
+        <td class="p3"><b>${c.ev_score !== undefined ? c.ev_score.toFixed(2) : '—'}</b></td>
         <td class="p3">${pct(c.p_next)}</td><td class="p3">${pct(c.p_before_end)}</td></tr>`).join('');
-        body = `<div class="criterion">排序标准:${esc(info.criterion)}</div>${flags.join('')}
-      <div class="scroll"><table><thead><tr><th>打出</th><th>打后向听</th><th>进张种类</th><th>进张剩余</th><th>听牌后最大番</th><th><span class="badge t3">概率</span>点炮风险</th><th><span class="badge t3">概率</span>下一摸进张</th><th><span class="badge t3">概率</span>流局前至少一张</th></tr></thead>
+        body = `<div class="criterion">排序标准:${esc(info.criterion_ev || info.criterion)}</div>${flags.join('')}
+      <div class="scroll"><table><thead><tr><th>打出</th><th>打后向听</th><th>进张种类</th><th>进张剩余</th><th>听牌后最大番</th><th><span class="badge t3">概率</span>点炮风险</th><th><span class="badge t3">综合</span>EV</th><th><span class="badge t3">概率</span>下一摸进张</th><th><span class="badge t3">概率</span>流局前至少一张</th></tr></thead>
       <tbody>${rows}</tbody></table></div>
       <div class="criterion">按"求番大"标准的顺序:${info.order_by_fan.slice(0, 6).map(esc).join(' › ')}</div>`;
       } else {

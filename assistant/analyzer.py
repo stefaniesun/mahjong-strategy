@@ -264,7 +264,7 @@ def analyze(state: AssistantState) -> Report:
                     )
             sections["danger"] = read_findings + danger_findings
             report.own_info, sections["own_hand"] = analyze_own_hand(
-                state, counts, winners=winners, floors=floors, danger_rows=report.danger_rows
+                state, counts, winners=winners, floors=floors, danger_rows=report.danger_rows, opp_reads=opp_reads
             )
         sections["alerts"] = build_alerts(
             state,

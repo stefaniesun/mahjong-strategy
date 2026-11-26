@@ -2066,14 +2066,15 @@
         return `<div class="decision-hero"><div class="eyebrow">第一优先 · 定缺</div><h3>建议定缺 ${esc(SUIT_CN[o.suit] || o.suit)}</h3><div class="reason">${esc(rep.opening_info.void_criterion || '优先选择最容易清理的花色')}</div><div class="quick-actions"><div class="quick-action"><b>${o.count}</b>手里张数</div><div class="quick-action"><b>${o.shanten_without}</b>其余牌向听</div></div></div>`;
       }
       const info = rep.own_info;
-      const top = info?.mode === 'discard' ? info.candidates?.[0] : null;
+      const evList = info?.mode === 'discard' ? (info.discard_v2_options?.length ? info.discard_v2_options : info.candidates) : null;
+      const top = evList ? evList[0] : null;
       if (top) {
-        const alternatives = (info.candidates || []).slice(1, 3);
-        const conflict = rep.flags?.defense_conflict
-          ? `攻防权衡：求快打 ${rep.flags.defense_conflict.speed}，求稳打 ${rep.flags.defense_conflict.safe}`
+        const alternatives = (evList || []).slice(1, 3);
+        const reasonTxt = top.ev_reason
+          ? `${top.ev_reason}${rep.flags?.defense_conflict ? ` · 攻防:求快${rep.flags.defense_conflict.speed}/求稳${rep.flags.defense_conflict.safe}` : ''}`
           : (rep.flags?.conflict ? `求快打 ${rep.flags.conflict.speed}，求番大打 ${rep.flags.conflict.fan}` : '综合进张效率、真实余牌与安全度');
         const riskTxt = top.safe_all ? '100%安全' : (top.dealin_prob !== undefined ? `${(top.dealin_prob * 100).toFixed(1)}%` : '—');
-        return `<div class="decision-hero"><div class="eyebrow">第一优先 · 出牌</div><h3>建议打出 ${miniL(top.tile)}</h3><div class="reason">${esc(conflict)}</div><div class="quick-actions"><div class="quick-action"><b>${top.shanten_after}</b>向听</div><div class="quick-action"><b>${top.live}</b>张有效牌</div><div class="quick-action"><b>${riskTxt}</b>点炮风险</div>${alternatives.map(a => `<div class="quick-action secondary"><b>${miniL(a.tile)}</b>备选</div>`).join('')}</div></div>`;
+        return `<div class="decision-hero"><div class="eyebrow">第一优先 · 综合出牌 (discard_v2)</div><h3>建议打出 ${miniL(top.tile)}</h3><div class="reason">${esc(reasonTxt)}</div><div class="quick-actions"><div class="quick-action"><b>${top.shanten_after}</b>向听</div><div class="quick-action"><b>${top.live}</b>张有效牌</div><div class="quick-action"><b>${riskTxt}</b>点炮风险</div>${alternatives.map(a => `<div class="quick-action secondary"><b>${miniL(a.tile)}</b>备选</div>`).join('')}</div></div>`;
       }
       return `<div class="decision-hero"><div class="eyebrow">当前决策</div><h3>请查看下方提示</h3><div class="reason">先处理确定性提醒，再展开详细分析。</div></div>`;
     }
@@ -2091,12 +2092,14 @@
         if (rep.flags.tie && rep.flags.tie.length) flags.push(`<span class="flag">并列:${rep.flags.tie.map(esc).join('、')}</span>`);
         if (rep.flags.conflict) flags.push(`<span class="flag">求快打${esc(rep.flags.conflict.speed)},求番大打${esc(rep.flags.conflict.fan)}</span>`);
         if (rep.flags.defense_conflict) flags.push(`<span class="flag">攻防:求快打${esc(rep.flags.defense_conflict.speed)},求稳打${esc(rep.flags.defense_conflict.safe)}</span>`);
-        const rows = info.candidates.map(c => `<tr data-row-tile="${fromLabel(c.tile)}"><td>${miniL(c.tile)}</td><td>${c.shanten_after}</td><td>${c.useful_kinds}种 <b>${c.live}</b>张</td>
+        const displayList = (info.discard_v2_options && info.discard_v2_options.length) ? info.discard_v2_options : info.candidates;
+        const rows = displayList.map(c => `<tr data-row-tile="${fromLabel(c.tile)}"><td>${miniL(c.tile)}</td><td>${c.shanten_after}</td><td>${c.useful_kinds}种 <b>${c.live}</b>张</td>
       <td>${c.max_fan === null ? '—' : c.max_fan + '番' + (c.dead_wait ? ' <span class="err">死听</span>' : '')}</td>
       <td class="${c.safe_all ? 'safe' : (c.dealin_prob >= 0.12 ? 'err' : 'p3')}">${c.safe_all ? '安全' : (c.dealin_prob !== undefined ? (c.dealin_prob * 100).toFixed(1) + '%' : '—')}</td>
-      <td class="p3">${pct(c.p_next)}</td><td class="p3">${pct(c.p_before_end)}</td></tr>`).join('');
-        body = `<div class="criterion">排序:${esc(info.criterion)}</div>${flags.join('')}
-      <table class="t"><thead><tr><th>打出</th><th>向听</th><th>进张</th><th>最大番</th><th><span class="tier t3">风险</span>点炮</th><th><span class="tier t3">概率</span>下摸</th><th><span class="tier t3">概率</span>流局前</th></tr></thead><tbody>${rows}</tbody></table>
+      <td class="p3"><b>${c.ev_score !== undefined ? c.ev_score.toFixed(2) : '—'}</b></td>
+      <td class="p3">${pct(c.p_next)}</td></tr>`).join('');
+        body = `<div class="criterion">排序:${esc(info.criterion_ev || info.criterion)}</div>${flags.join('')}
+      <table class="t"><thead><tr><th>打出</th><th>向听</th><th>进张</th><th>最大番</th><th><span class="tier t3">风险</span>点炮</th><th><span class="tier t3">综合</span>EV</th><th><span class="tier t3">概率</span>下摸</th></tr></thead><tbody>${rows}</tbody></table>
       <div class="criterion" style="margin-top:6px">按求番大:${(info.order_by_fan || []).slice(0, 6).map(esc).join(' › ')}</div>`;
       } else {
         const useful = (info.useful || []).map(u => `${miniL(u.tile)}<small class="muted">${u.remaining}</small>`).join(' ');

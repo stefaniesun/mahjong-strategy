@@ -9,6 +9,8 @@ from engine.ting_check import ting_tiles
 
 from assistant.counting import TileCounts
 from assistant.danger import random_pool
+from assistant.discard_v2 import score_discard_candidates_v2
+from assistant.opponent_read import OpponentRead
 from assistant.report import Finding, certain, counted, probable
 from assistant.state import AssistantState
 from assistant.swap_v1 import ZERO_SUIT, suit_profile
@@ -18,6 +20,8 @@ from engine.tiles import SUITS
 
 CRITERION_SPEED = "先看打出后的向听数(少的在前),再看有效进张实际剩余张数(多的在前)"
 CRITERION_FAN = "先看打出后的向听数(少的在前);能听牌的,再看听牌后最大番数(大的在前),最后看剩余进张"
+CRITERION_EV = "综合向听速度、真实有效进张、听牌番数期望、清一色/七对大番潜力、校准点炮风险与残局查叫保底(EV 越高越优)"
+ASSUMPTION_DISCARD_V2 = "按 240 局配对实测校准的中盘攻防与残局止损权重计算综合期望值(EV), 兼顾赢面与大牌避炮。"
 
 
 def fast_shanten_hand(counts: list[int] | tuple[int, ...], fixed_melds: int, void_idx: int | None) -> int:
@@ -267,6 +271,7 @@ def analyze_own_hand(
     winners: list[WinnerInference] | None = None,
     floors: dict[int, tuple[int, ...]] | None = None,
     danger_rows: list[dict] | None = None,
+    opp_reads: dict[int, OpponentRead] | None = None,
 ) -> tuple[dict, list[Finding]]:
     hand = build_own_hand(state)
     void = own_void(state)
@@ -329,7 +334,18 @@ def analyze_own_hand(
             key=lambda c: (c["shanten_after"], -(c["max_fan"] if c["max_fan"] is not None else -1), -c["live"], c["index"]),
         )
         by_safe = sorted(candidates, key=lambda c: (c["dealin_prob"], c["shanten_after"], -c["live"], c["index"]))
+        by_ev = score_discard_candidates_v2(state, hand, counts, by_speed, danger_rows=danger_rows, opp_reads=opp_reads)
+        ev_by_idx = {c["index"]: c for c in by_ev}
+        for c in by_speed:
+            ev_c = ev_by_idx[c["index"]]
+            c["ev_score"] = ev_c["ev_score"]
+            c["ev_offense"] = ev_c["ev_offense"]
+            c["ev_defense"] = ev_c["ev_defense"]
+            c["ev_fan"] = ev_c["ev_fan"]
+            c["ev_reason"] = ev_c["ev_reason"]
+
         top = by_speed[0]
+        ev_top = by_ev[0]
         tied = [c["tile"] for c in by_speed if (c["shanten_after"], c["live"]) == (top["shanten_after"], top["live"])]
         conflict = (
             by_fan[0]["tile"] != top["tile"]
@@ -352,10 +368,14 @@ def analyze_own_hand(
 
         info.update(
             candidates=by_speed,
+            discard_v2_options=by_ev,
+            discard_v2_pick=ev_top["tile"],
+            order_by_ev=[c["tile"] for c in by_ev],
             order_by_fan=[c["tile"] for c in by_fan],
             order_by_safe=[c["tile"] for c in by_safe],
             criterion=CRITERION_SPEED,
             criterion_fan=CRITERION_FAN,
+            criterion_ev=CRITERION_EV,
             current_best_shanten=top["shanten_after"],
             tie=tied if len(tied) > 1 else [],
             conflict={"speed": top["tile"], "fan": by_fan[0]["tile"]} if conflict else None,
@@ -372,6 +392,18 @@ def analyze_own_hand(
                     + (f" | 点炮风险约 {c['dealin_prob']:.1%}({c['risk_label']})" if danger_rows else "")
                     for c in by_speed[:4]
                 ],
+            )
+        )
+        findings.append(
+            probable(
+                "own_hand",
+                f"综合出牌推荐(discard_v2):打{ev_top['tile']} (EV {ev_top['ev_score']:+.2f} | {ev_top['ev_reason']})",
+                [f"排序标准:{CRITERION_EV}"]
+                + [
+                    f"打{c['tile']}: EV {c['ev_score']:+.2f} (攻 {c['ev_offense']:+.2f}, 番 {c['ev_fan']:+.2f}, 防 {c['ev_defense']:+.2f}) | {c['ev_reason']}"
+                    for c in by_ev[:4]
+                ],
+                assumption=ASSUMPTION_DISCARD_V2,
             )
         )
         if len(tied) > 1:
