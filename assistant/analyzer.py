@@ -12,6 +12,7 @@ from assistant.counting import TileCounts, breakdown_text, compute_counts, conse
 from assistant.danger import analyze_danger, random_pool
 from assistant.known_holdings import swap_floors
 from assistant.opening import analyze_opening, swap_tracking
+from assistant.opponent_read import OpponentRead, read_all_opponents
 from assistant.own_hand import analyze_own_hand
 from assistant.report import Finding, certain, counted, probable
 from assistant.state import AssistantState
@@ -33,6 +34,7 @@ class Report:
     counts: TileCounts | None = None
     winners: list[WinnerInference] = field(default_factory=list)
     danger_rows: list[dict] = field(default_factory=list)
+    opponent_reads: list[dict] = field(default_factory=list)
     own_info: dict | None = None
     opening_info: dict | None = None
     remaining_rows: list[dict] = field(default_factory=list)
@@ -43,7 +45,11 @@ class Report:
     @property
     def flags(self) -> dict[str, Any]:
         info = self.own_info or {}
-        return {"tie": info.get("tie") or [], "conflict": info.get("conflict")}
+        return {
+            "tie": info.get("tie") or [],
+            "conflict": info.get("conflict"),
+            "defense_conflict": info.get("defense_conflict"),
+        }
 
     def all_findings(self) -> list[Finding]:
         return [finding for findings in self.sections.values() for finding in findings]
@@ -62,6 +68,7 @@ class Report:
             "own_info": self.own_info,
             "opening_info": self.opening_info,
             "danger_rows": self.danger_rows,
+            "opponent_reads": self.opponent_reads,
             "winners": self.winner_items,
             "remaining": self.remaining_rows,
             "flags": self.flags,
@@ -231,13 +238,42 @@ def analyze(state: AssistantState) -> Report:
     else:
         floors = swap_floors(state)
         winners = infer_winners(state, counts, floors=floors)
+        opp_reads = read_all_opponents(state, floors)
         report.winners = winners
+        report.opponent_reads = [r.to_dict() for r in opp_reads.values()]
         report.winner_items, sections["winners"] = _winner_section(state, winners)
         report.remaining_rows, sections["remaining"] = _remaining_section(state, counts, winners, floors)
         if not state.me.won and state.own_hand:
-            report.danger_rows, sections["danger"] = analyze_danger(state, counts, winners, floors)
-            report.own_info, sections["own_hand"] = analyze_own_hand(state, counts)
-        sections["alerts"] = build_alerts(state, report.own_info, report.danger_rows)
+            report.danger_rows, danger_findings = analyze_danger(state, counts, winners, floors, opponent_reads=opp_reads)
+            # 在安全度面板顶部置入对手听牌进度与大牌型预警摘要
+            read_findings: list[Finding] = []
+            for r in opp_reads.values():
+                if r.holds_known_void:
+                    continue
+                if r.threats or r.tenpai_prob >= 0.45:
+                    threat_txt = f" | 警戒:{'、'.join(r.threats)}" if r.threats else ""
+                    read_findings.append(
+                        probable(
+                            "danger",
+                            f"{r.name}听牌进度估计约 {r.tenpai_prob:.0%}{threat_txt}",
+                            list(r.basis),
+                            seat=r.seat,
+                            prob=r.tenpai_prob,
+                            assumption="基于副露数、非缺门弃牌节奏与牌河花色偏向在大样本对局上标定的经验概率。",
+                        )
+                    )
+            sections["danger"] = read_findings + danger_findings
+            report.own_info, sections["own_hand"] = analyze_own_hand(
+                state, counts, winners=winners, floors=floors, danger_rows=report.danger_rows
+            )
+        sections["alerts"] = build_alerts(
+            state,
+            report.own_info,
+            report.danger_rows,
+            counts=counts,
+            winners=winners,
+            opp_reads=opp_reads,
+        )
         tracking = swap_tracking(state)
         if tracking:
             sections["opening"] = tracking

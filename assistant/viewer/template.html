@@ -487,13 +487,15 @@
         const flags = [];
         if (rep.flags.tie && rep.flags.tie.length) flags.push(`<span class="flag">并列:${rep.flags.tie.map(esc).join('、')}</span>`);
         if (rep.flags.conflict) flags.push(`<span class="flag">标准冲突:求快打${esc(rep.flags.conflict.speed)},求番大打${esc(rep.flags.conflict.fan)}</span>`);
+        if (rep.flags.defense_conflict) flags.push(`<span class="flag" style="background:var(--t3-bg);color:var(--t3)">攻防权衡:求快打${esc(rep.flags.defense_conflict.speed)},求稳打${esc(rep.flags.defense_conflict.safe)}</span>`);
         const rows = info.candidates.map(c => `
       <tr class="${c.tile === chosen ? 'chosen' : ''}">
         <td>${tile(c.tile)}</td><td>${c.shanten_after}</td><td>${c.useful_kinds}</td><td><b>${c.live}</b></td>
         <td>${c.max_fan === null ? '—' : c.max_fan + ' 番' + (c.dead_wait ? ' <span class="error">死听</span>' : '')}</td>
+        <td class="${c.safe_all ? 'safe' : 'p3'}">${c.safe_all ? '100%安全' : (c.dealin_prob !== undefined ? (c.dealin_prob * 100).toFixed(1) + '% ' + esc(c.risk_label || '') : '—')}</td>
         <td class="p3">${pct(c.p_next)}</td><td class="p3">${pct(c.p_before_end)}</td></tr>`).join('');
         body = `<div class="criterion">排序标准:${esc(info.criterion)}</div>${flags.join('')}
-      <div class="scroll"><table><thead><tr><th>打出</th><th>打后向听</th><th>进张种类</th><th>进张剩余</th><th>听牌后最大番</th><th><span class="badge t3">概率</span>下一摸进张</th><th><span class="badge t3">概率</span>流局前至少一张</th></tr></thead>
+      <div class="scroll"><table><thead><tr><th>打出</th><th>打后向听</th><th>进张种类</th><th>进张剩余</th><th>听牌后最大番</th><th><span class="badge t3">概率</span>点炮风险</th><th><span class="badge t3">概率</span>下一摸进张</th><th><span class="badge t3">概率</span>流局前至少一张</th></tr></thead>
       <tbody>${rows}</tbody></table></div>
       <div class="criterion">按"求番大"标准的顺序:${info.order_by_fan.slice(0, 6).map(esc).join(' › ')}</div>`;
       } else {
@@ -509,18 +511,25 @@
     function renderDanger(rep) {
       const rows = rep.danger_rows || [];
       if (!rows.length) return '';
+      const reads = rep.opponent_reads || [];
+      const readBar = reads.length ? `<div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px">${reads.map(r => {
+        const threat = r.threats && r.threats.length ? ` · <b class="error">${esc(r.threats.join('/'))}</b>` : '';
+        return `<span class="chip" title="${esc((r.basis || []).join('；'))}"><b>${esc(r.name)}</b> 听牌≈${pct(r.tenpai_prob)}${threat}</span>`;
+      }).join('')}</div>` : '';
       const names = rows[0].per_opponent.map(e => e.name);
       const body = rows.map(r => `<tr><td>${tile(r.tile)}</td>${r.per_opponent.map(e => {
         if (e.safe) return `<td class="safe" title="${e.reason === 'void' ? '对方定缺这门' : e.reason === 'holds_void' ? '他还拿着你换给他的缺门牌,打出之前不能胡' : '所有等待形状都被堵死'}">100% 安全</td>`;
         const possible = e.shapes.filter(s => s.possible);
-        const tip = possible.map(s => `${s.name}(${s.tiles.join('、')})${s.hold_prob !== undefined ? ' 约' + pct(s.hold_prob) : ''}`).join('\n');
-        return `<td title="${esc(tip)}">${possible.length} 种形状 <span class="p3">≈${pct(e.any_shape_prob || 0)}</span></td>`;
-      }).join('')}</tr>`).join('');
+        const tags = (e.risk_tags && e.risk_tags.length) ? '\n读牌:' + e.risk_tags.join('、') : '';
+        const tip = possible.map(s => `${s.name}(${s.tiles.join('、')})${s.hold_prob !== undefined ? ' 约' + pct(s.hold_prob) : ''}`).join('\n') + tags;
+        const dp = e.dealin_prob !== undefined ? `<b class="${e.dealin_prob >= 0.12 ? 'error' : 'p3'}">${(e.dealin_prob * 100).toFixed(1)}%</b>` : `<span class="p3">≈${pct(e.any_shape_prob || 0)}</span>`;
+        return `<td title="${esc(tip)}">${dp} <small class="muted">(${possible.length}形)</small></td>`;
+      }).join('')}<td class="${r.safe_all ? 'safe' : (r.total_dealin_prob >= 0.12 ? 'error' : 'p3')}">${r.safe_all ? '安全' : (r.total_dealin_prob * 100).toFixed(1) + '%'}</td></tr>`).join('');
       const certainOnly = (rep.sections.danger || []).filter(f => f.tier === 1);
       const rest = (rep.sections.danger || []).filter(f => f.tier !== 1);
-      return `<div class="panel"><h2>安全度 <small>对每家在场对手;鼠标停在格子上看具体形状</small></h2>
-    <div class="scroll"><table><thead><tr><th>你的牌</th>${names.map(n => `<th>${esc(n)}</th>`).join('')}</tr></thead><tbody>${body}</tbody></table></div>
-    <div class="assume">"≈X%" 是概率档:按未知牌随机分布估算"他手里有能等这张的搭子"的概率,不等于他已听牌,也不等于点炮概率。</div>
+      return `<div class="panel"><h2>安全度与对手读牌 <small>对每家在场对手的校准点炮率;鼠标停在格子上看详情</small></h2>${readBar}
+    <div class="scroll"><table><thead><tr><th>你的牌</th>${names.map(n => `<th>${esc(n)}</th>`).join('')}<th>综合风险</th></tr></thead><tbody>${body}</tbody></table></div>
+    <div class="assume">百分比为大样本标定的点炮风险概率(融合听牌进度、现物/双筋、花色偏向与已知换牌搭子);100%安全为确定档零误判。</div>
     ${findingsBlock(certainOnly, '确定结论')}${findingsBlock(rest, '计数与概率结论')}</div>`;
     }
 
@@ -575,7 +584,9 @@
           ? `<table><thead><tr><th>换出</th><th><span class="badge t3">概率</span>预计向听</th><th><span class="badge t3">概率</span>预计缺门</th><th>清一色苗</th><th>送牌评估</th><th>留牌向听</th></tr></thead><tbody>${info.swap_options.slice(0, 8).map(o => `<tr><td>${tiles(o.tiles)}</td><td class="p3">${o.exp_shanten}</td><td class="p3">${o.exp_void_cnt}张</td><td class="p3">${o.exp_flush_rate >= 0.1 ? pct(o.exp_flush_rate) : '—'}</td><td>${esc(o.gift_shape)}</td><td>${o.shanten_rest}(剩${o.suit_left})</td></tr>`).join('')}</tbody></table>`
           : `<table><thead><tr><th>换出</th><th>留牌向听</th><th>该门剩余</th></tr></thead><tbody>${info.swap_options.slice(0, 8).map(o => `<tr><td>${tiles(o.tiles)}</td><td>${o.shanten_rest}</td><td>${o.suit_left}</td></tr>`).join('')}</tbody></table>`);
       }
-      if (info && info.void_options) {
+      if (info && info.void_v3_options) {
+        body += `<div class="criterion" style="margin-top:8px">定缺推荐(void_v3):${esc(info.void_v3_criterion || '')}</div><table><thead><tr><th>缺</th><th>张数</th><th>缺后向听</th><th>有效进张</th><th>综合代价</th><th>换牌流向</th></tr></thead><tbody>${info.void_v3_options.map(o => `<tr><td><b>${esc(o.suit)}</b></td><td>${o.void_cnt}</td><td>${o.shanten}</td><td><b>${o.live}</b></td><td class="p3">${o.total_cost.toFixed(2)}</td><td>${esc(o.ctx_note || '—')}</td></tr>`).join('')}</tbody></table>`;
+      } else if (info && info.void_options) {
         body += `<div class="criterion" style="margin-top:8px">定缺排序标准:${esc(info.void_criterion)}</div><table><thead><tr><th>缺</th><th>这门张数</th><th>其余牌向听</th></tr></thead><tbody>${info.void_options.map(o => `<tr><td>${esc(o.suit)}</td><td>${o.count}</td><td>${o.shanten_without}</td></tr>`).join('')}</tbody></table>`;
       }
       return `<div class="panel"><h2>${info ? '开局' : '换牌去向'}</h2>${body}${findingsBlock(list)}</div>`;

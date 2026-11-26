@@ -14,6 +14,7 @@ from __future__ import annotations
 import math
 
 from assistant.counting import TileCounts
+from assistant.opponent_read import OpponentRead, describe_tile_risk, estimate_dealin_prob, read_all_opponents
 from assistant.report import Finding, certain, counted, probable
 from assistant.state import AssistantState, PlayerView
 from assistant.tiles import label, rank_of, seat_name, suit_label, suit_of, tidx
@@ -93,9 +94,14 @@ def random_pool(counts: TileCounts, winners: list[WinnerInference], floors: Floo
 
 
 def analyze_danger(
-    state: AssistantState, counts: TileCounts, winners: list[WinnerInference], floors: Floors | None = None
+    state: AssistantState,
+    counts: TileCounts,
+    winners: list[WinnerInference],
+    floors: Floors | None = None,
+    opponent_reads: dict[int, OpponentRead] | None = None,
 ) -> tuple[list[dict], list[Finding]]:
     floors = floors or {}
+    reads = opponent_reads if opponent_reads is not None else read_all_opponents(state, floors)
     zero = (0,) * 27
     own_tiles = sorted({tidx(tile) for tile in state.own_hand})
     opponents = state.active_opponents()
@@ -115,10 +121,12 @@ def analyze_danger(
     for index in own_tiles:
         per_opponent = []
         safe_seats = []
+        not_dealin_all = 1.0
         for view in opponents:
             who = seat_name(view.seat, state.perspective)
+            opp_read = reads[view.seat]
             if view.void_suit is not None and suit_of(index) == view.void_suit:
-                per_opponent.append({"seat": view.seat, "name": who, "safe": True, "reason": "void", "shapes": []})
+                per_opponent.append({"seat": view.seat, "name": who, "safe": True, "reason": "void", "shapes": [], "dealin_prob": 0.0, "risk_tags": []})
                 safe_seats.append(view.seat)
                 continue
             if view.seat in holds_void:
@@ -130,6 +138,8 @@ def analyze_danger(
                         "reason": "holds_void",
                         "shapes": [],
                         "void_tiles": [label(t) for t in holds_void[view.seat]],
+                        "dealin_prob": 0.0,
+                        "risk_tags": [],
                     }
                 )
                 safe_seats.append(view.seat)
@@ -142,12 +152,17 @@ def analyze_danger(
                 need_counts: dict[int, int] = {}
                 for t in needed:
                     need_counts[t] = need_counts.get(t, 0) + 1
-                possible = all(caps[t] >= n for t, n in need_counts.items())
+                # 确定性剪枝: 若对手暗手牌总张数不足以放下该形状(例如 4 副露仅剩 1 张暗牌不能凑 2 张顺子搭), 必然不可能
+                possible = (len(needed) <= view.hidden_count) and all(caps[t] >= n for t, n in need_counts.items())
                 shape = {
                     "name": name,
                     "tiles": [label(t) for t in needed],
                     "possible": possible,
-                    "basis": [f"{label(t)}可持有上限 {caps[t]} 张" for t in sorted(set(needed))],
+                    "basis": (
+                        [f"对手仅剩 {view.hidden_count} 张暗手牌,凑不出 {len(needed)} 张搭子"]
+                        if len(needed) > view.hidden_count
+                        else [f"{label(t)}可持有上限 {caps[t]} 张" for t in sorted(set(needed))]
+                    ),
                 }
                 # 一定有的牌已经满足的部分,不用再从随机部分里凑
                 missing = [t for t, n in need_counts.items() if floor[t] < n]
@@ -175,12 +190,27 @@ def analyze_danger(
                 for shape in possible_shapes:
                     none_prob *= 1.0 - shape.get("hold_prob", 0.0)
                 entry["any_shape_prob"] = 1.0 - none_prob
+                dealin_p, risk_tags = estimate_dealin_prob(index, opp_read, counts, possible_shapes)
+                entry["dealin_prob"] = round(dealin_p, 4)
+                entry["risk_tags"] = risk_tags
+                not_dealin_all *= 1.0 - dealin_p
             else:
+                entry["dealin_prob"] = 0.0
+                entry["risk_tags"] = []
                 safe_seats.append(view.seat)
             per_opponent.append(entry)
 
         safe_all = bool(opponents) and len(safe_seats) == len(opponents)
-        rows.append({"tile": label(index), "per_opponent": per_opponent, "safe_all": safe_all})
+        total_dealin = 0.0 if (safe_all or not opponents) else round(1.0 - not_dealin_all, 4)
+        rows.append(
+            {
+                "tile": label(index),
+                "per_opponent": per_opponent,
+                "safe_all": safe_all,
+                "total_dealin_prob": total_dealin,
+                "risk_label": describe_tile_risk(total_dealin),
+            }
+        )
 
         for entry in per_opponent:
             if not entry["safe"]:

@@ -143,31 +143,18 @@ def _cartesian(allowed: list[int], arrays: list[np.ndarray]) -> np.ndarray:
     return out
 
 
-def enumerate_hidden_hands(
+@lru_cache(maxsize=4096)
+def _enumerate_hidden_hands_cached(
     win_index: int,
     fixed_melds: int,
     void_suit: str | None,
-    unseen: tuple[int, ...],
-    limit: int = ENUM_LIMIT,
-    floor: tuple[int, ...] | None = None,
+    allowed_caps: tuple[tuple[int, tuple[int, ...]], ...],
+    limit: int,
+    allowed_need: tuple[tuple[int, tuple[int, ...]], ...],
 ) -> tuple[str, np.ndarray]:
-    """枚举胡牌者可能的暗手牌(不含胡牌张)。返回 (状态, 候选矩阵 (N,27))。
-
-    unseen 是他每种牌最多能拿几张;floor 是他一定有的最少张数(如你换给他、还没出手的牌)。
-    """
-    allowed = [s for s in range(3) if void_suit is None or SUIT_ORDER[s] != void_suit]
-    win_suit, win_rank = divmod(win_index, 9)
-    if win_suit not in allowed or not 0 <= fixed_melds <= 4:
-        return STATUS_NO_CANDIDATE, _EMPTY
-    caps = list(unseen)
-    caps[win_index] += 1  # 完整暗牌 = H + 亮出的胡牌张
-    suit_caps = {s: tuple(caps[s * 9 : (s + 1) * 9]) for s in allowed}
-
-    need = list(floor) if floor is not None else [0] * 27
-    need[win_index] += 1  # 胡牌张所在花色必须含这张
-    suit_need = {s: np.asarray(need[s * 9 : (s + 1) * 9], dtype=np.int64) for s in range(3)}
-    if any(need[t] for s in range(3) if s not in allowed for t in range(s * 9, (s + 1) * 9)):
-        return STATUS_NO_CANDIDATE, _EMPTY  # 一定有的牌落在他的缺门里,不可能胡
+    allowed = [s for s, _ in allowed_caps]
+    suit_caps = dict(allowed_caps)
+    suit_need = {s: np.asarray(n, dtype=np.int64) for s, n in allowed_need}
 
     def suit_lists(raw):
         lists = []
@@ -191,7 +178,6 @@ def enumerate_hidden_hands(
             lists = suit_lists([_suit_pair_array(suit_caps[s], pair_split[j]) for j, s in enumerate(allowed)])
             if lists is not None:
                 groups.append(lists)
-    # 不同拆分、不同组合拼出的张数分布两两不同(只有七对和标准型偶尔重合),乘积之和是精确个数的上界。
     total = sum(math.prod(len(lst) for lst in lists) for lists in groups)
     if total > limit:
         return STATUS_TOO_MANY, _EMPTY
@@ -201,7 +187,36 @@ def enumerate_hidden_hands(
     _, first = np.unique(hands @ _POW5, return_index=True)
     hands = hands[np.sort(first)]
     hands[:, win_index] -= 1
+    hands.setflags(write=False)
     return STATUS_COMPLETE, hands
+
+
+def enumerate_hidden_hands(
+    win_index: int,
+    fixed_melds: int,
+    void_suit: str | None,
+    unseen: tuple[int, ...],
+    limit: int = ENUM_LIMIT,
+    floor: tuple[int, ...] | None = None,
+) -> tuple[str, np.ndarray]:
+    """枚举胡牌者可能的暗手牌(不含胡牌张)。返回 (状态, 候选矩阵 (N,27))。
+
+    unseen 是他每种牌最多能拿几张;floor 是他一定有的最少张数(如你换给他、还没出手的牌)。
+    """
+    allowed = [s for s in range(3) if void_suit is None or SUIT_ORDER[s] != void_suit]
+    win_suit, _ = divmod(win_index, 9)
+    if win_suit not in allowed or not 0 <= fixed_melds <= 4:
+        return STATUS_NO_CANDIDATE, _EMPTY
+    caps = list(unseen)
+    caps[win_index] += 1  # 完整暗牌 = H + 亮出的胡牌张
+    need = list(floor) if floor is not None else [0] * 27
+    need[win_index] += 1  # 胡牌张所在花色必须含这张
+    if any(need[t] for s in range(3) if s not in allowed for t in range(s * 9, (s + 1) * 9)):
+        return STATUS_NO_CANDIDATE, _EMPTY  # 一定有的牌落在他的缺门里,不可能胡
+
+    allowed_caps = tuple((s, tuple(caps[s * 9 : (s + 1) * 9])) for s in allowed)
+    allowed_need = tuple((s, tuple(need[s * 9 : (s + 1) * 9])) for s in allowed)
+    return _enumerate_hidden_hands_cached(win_index, fixed_melds, void_suit, allowed_caps, limit, allowed_need)
 
 
 def _ways(unseen, hands: np.ndarray) -> np.ndarray:
@@ -274,19 +289,22 @@ def infer_winners(
     joint_weights: dict[int, np.ndarray] = {}
     if len(complete) == 2 and len(complete[0][3]) * len(complete[1][3]) <= joint_limit:
         (rec_a, _, _, a_hands, a_floor), (rec_b, _, _, b_hands, b_floor) = sorted(complete, key=lambda item: len(item[3]))
-        # 只有"一定有"之外的部分是随机来的;外层循环走候选少的一方,内层用向量运算处理多的一方
+        # 只有"一定有"之外的部分是随机来的;仅保留至少一方可能用到的列以减少2-3倍内存带宽
         a_arr = a_hands - a_floor
         b_arr = b_hands - b_floor
-        u = pool
-        base = _ways(u, a_arr)
-        wa = np.zeros(len(a_arr))
-        wb = np.zeros(len(b_arr))
-        for i in range(len(a_arr)):
-            rest = u - a_arr[i]  # 第一个人拿走后剩下的
-            ok = (b_arr <= rest).all(axis=1)
+        cols = np.where((a_arr.max(axis=0) > 0) | (b_arr.max(axis=0) > 0))[0]
+        a_sub = a_arr[:, cols]
+        b_sub = b_arr[:, cols]
+        u_sub = pool[cols]
+        base = _COMB[u_sub[None, :], a_sub].prod(axis=1)
+        wa = np.zeros(len(a_sub))
+        wb = np.zeros(len(b_sub))
+        for i in range(len(a_sub)):
+            rest = u_sub - a_sub[i]  # 第一个人拿走后剩下的
+            ok = (b_sub <= rest).all(axis=1)
             if not ok.any():
                 continue
-            weight = base[i] * _ways(rest, b_arr[ok])
+            weight = base[i] * _COMB[rest[None, :], b_sub[ok]].prod(axis=1)
             wa[i] = weight.sum()
             wb[ok] += weight
         joint_weights[rec_a.seat] = wa
