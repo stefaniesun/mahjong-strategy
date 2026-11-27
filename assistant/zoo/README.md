@@ -16,6 +16,7 @@
 | :--- | :--- | :--- | :--- |
 | `v2_ev_base` | `8cb0cfc` | 初代完整全套 `AssistantPolicy`（`swap_v2 + void_v3 + opponent_read + discard_v2 + tactics`） | `det: +0.204 (±0.086)` / `rand: +0.079 (±0.086)` (`outputs/arena_tournament_large.json`) |
 | `v3_goodwait_read` | `3f0bcd9` | 摸切/手牌未变放过牌读牌 + 1向听好型前瞻 + 三家碰提速 + 杠钱追回 + 收紧随机抽样 + 缓存限额 | `rand: +0.130 (±0.080)` / `det: +0.081 (±0.084)`，同桌赢 `v2 +0.077`、显著赢 `s3_plus +0.167*` (`outputs/arena_v2_vs_v3.json`) |
+| `v4_waitq_tactics` | `66e601a` | 听对手缺门/边幺/已知换牌必打听口加成 + 按自身番数动态缩放防守 + 中盘 1→2 暗杠追回 + 收紧不降向听缩手碰牌与碰后攻防弃牌 | 待跑 `v3 vs v4` 10,000 局对照赛 |
 
 ---
 

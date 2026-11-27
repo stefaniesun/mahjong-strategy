@@ -1,0 +1,8 @@
+{
+  "version": "v4_waitq_tactics",
+  "git_commit": "66e601a",
+  "git_subject": "feat(assistant): v4 upgrade - wait quality (opp void/terminal/swap-floor), value-scaled defense, midgame concealed kong capture, tighter no-regress pong",
+  "created_at": "2026-11-27 14:34:09",
+  "note": "听对手缺门/边幺/已知换牌必打听口加成 + 按自身番数动态缩放防守 + 中盘1->2暗杠追回 + 收紧不降向听缩手碰牌与碰后攻防弃牌",
+  "benchmark": {}
+}
