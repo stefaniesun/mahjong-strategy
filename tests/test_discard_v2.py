@@ -107,3 +107,14 @@ def test_discard_v2_1shanten_good_wait_and_pong_speedup():
     unseen_p = tuple(4 - c for c in h_pair.counts)
     outs = _pong_speedup_outs(list(h_pair.counts), 0, 0, 1, unseen_p)
     assert outs == 4
+
+
+def test_discard_v2_prefers_waiting_on_opponents_void_suit_and_terminal():
+    # 同 0 番单钓(各剩 3 张): 两家对手缺条(T), 无人缺筒(B) -> 打 5筒 听 9条(双家缺门+幺九) 应显著优于打 9条 听 5筒
+    own = "1T 2T 3T 4T 5T 6T 1B 2B 3B 7B 8B 9B 9T 5B".split()
+    st = make_state(own, voids={0: "W", 1: "T", 2: "T", 3: "W"})
+    rep = analyze(st)
+    assert not rep.errors
+    ev_opts = {c["tile"]: c for c in rep.own_info["discard_v2_options"]}
+    assert ev_opts["5筒"]["ev_score"] > ev_opts["9条"]["ev_score"]
+    assert rep.own_info["discard_v2_pick"] == "5筒"

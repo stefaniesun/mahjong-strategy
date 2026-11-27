@@ -195,6 +195,47 @@ def _pong_speedup_outs(
     return outs
 
 
+def _wait_quality_multiplier(
+    w_idx: int,
+    state: AssistantState,
+    floors: dict[int, list[int]] | None,
+) -> float:
+    """听牌张质量加成(160局实测校准):
+    1. 听对手缺门(active opp 缺该花色 -> 摸到必打送胡): 0家 1.00 / 1家 1.14 / 2家 1.24 / 3家 1.36;
+    2. 已知换牌底牌(某在场对手手里确定握着该缺门牌, 1~2巡必打出): 额外 1.45x;
+    3. 边幺好胡(1/9 -> 1.11, 2/8 -> 1.06, 3-7 -> 1.00)。
+    """
+    w_suit = suit_of(w_idx)
+    n_void = 0
+    forced_swap_void = False
+    for p in state.active_opponents():
+        if p.void_suit == w_suit:
+            n_void += 1
+            if floors is not None and floors.get(p.seat, [0] * 27)[w_idx] > 0:
+                forced_swap_void = True
+    if n_void >= 3:
+        void_mult = 1.36
+    elif n_void == 2:
+        void_mult = 1.24
+    elif n_void == 1:
+        void_mult = 1.14
+    else:
+        void_mult = 1.00
+
+    r = rank_of(w_idx)
+    if r in (1, 9):
+        rank_mult = 1.11
+    elif r in (2, 8):
+        rank_mult = 1.06
+    else:
+        rank_mult = 1.00
+
+    mult = void_mult * rank_mult
+    if forced_swap_void:
+        mult *= 1.45
+    return mult
+
+
 def score_discard_candidates_v2(
     state: AssistantState,
     hand: Hand,
@@ -203,6 +244,7 @@ def score_discard_candidates_v2(
     danger_rows: list[dict] | None = None,
     opp_reads: dict[int, OpponentRead] | None = None,
     config: DiscardV2Config = DEFAULT_DISCARD_V2_CONFIG,
+    floors: dict[int, list[int]] | None = None,
 ) -> list[dict]:
     """为 own_hand.py 生成的弃牌候选列表计算 discard_v2 综合 EV 分(ev_score 越高越优)。
 
@@ -222,10 +264,21 @@ def score_discard_candidates_v2(
 
     best_sh = min(c["shanten_after"] for c in candidates)
     best_live_at_min_sh = max((c["live"] for c in candidates if c["shanten_after"] == best_sh), default=0)
+    best_tenpai_fan = max(
+        ((c.get("max_fan") or 0) for c in candidates if c["shanten_after"] == 0 and c["live"] > 0),
+        default=0,
+    )
+    active_n = max(1, len(state.active_opponents()))
 
-    # 动态攻防系数: 自己远向听且进入中后盘时显著加大防守权重
+    # 动态攻防系数: 按自身进度、大番价值与残局阶段平滑缩放防守权重
     if best_sh == 0 and best_live_at_min_sh > 0:
         def_mult = 0.72 if state.wall_count > 16 else 0.90
+        if best_tenpai_fan >= 2:
+            # 听大番(2番+): 进攻回报远大于一般点炮, 适度压低保守度
+            def_mult *= 0.80
+        elif best_tenpai_fan == 0 and best_live_at_min_sh <= 3:
+            # 仅听 0 番窄口(<=3张): 不要为了1分平胡硬冲对手大牌炮口
+            def_mult *= 1.22
     elif best_sh == 1:
         def_mult = 1.00 if state.wall_count > 18 else 1.25
     else:
@@ -310,16 +363,19 @@ def score_discard_candidates_v2(
         if sh == 0:
             waits = c.get("waits") or ()
             if waits and live > 0:
-                # 综合点炮分 + 自摸期望(自摸概率略低于点炮, 且多收在场各家)
+                # 综合点炮分 + 自摸期望, 并叠加"听对手缺门/边幺好胡/已知换牌缺门必打"质量系数
+                ron_w = 0.68 if active_n >= 3 else (0.62 if active_n == 2 else 0.52)
+                tsumo_w = 1.0 - ron_w
                 raw_win_ev = 0.0
                 for w in waits:
                     rem = w["remaining"]
                     if rem <= 0:
                         continue
+                    w_idx = tidx(from_label(w["tile"]))
+                    q_mult = _wait_quality_multiplier(w_idx, state, floors)
                     ron_s = w["ron_score"] / base_score
                     tsumo_s = (w["tsumo_each"] * max(1, w["tsumo_payers"])) / base_score
-                    # 期望每张有效胡口对应的平均收分(点炮权重 0.65 + 自摸权重 0.35)
-                    raw_win_ev += rem * (0.65 * ron_s + 0.35 * tsumo_s)
+                    raw_win_ev += rem * q_mult * (ron_w * ron_s + tsumo_w * tsumo_s)
                 offense = config.w_tenpai_ev * math.log1p(raw_win_ev) + endgame_chajiao_value
             else:
                 # 死听: 中盘大扣分, 但残局仍保留保叫价值(不赔查叫不退税)

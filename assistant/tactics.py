@@ -6,6 +6,7 @@
 """
 from __future__ import annotations
 
+import math
 from typing import Sequence
 
 from engine.hand import Hand
@@ -63,7 +64,9 @@ def _best_post_pong_discard(
         useful = fast_useful_indices(counts, melds, void_idx, sh)
         live = sum(eff_unseen[u] for u in useful)
         risk = risk_by_idx.get(idx, 0.0)
-        key = (sh, -live, risk, idx)
+        # 攻防平衡排序: 向听优先, 同向听下兼顾有效进张与弃牌点炮风险, 防止为多1张进张去打高危炮牌
+        ev_score = math.log1p(live) - 3.2 * risk
+        key = (sh, -ev_score, risk, idx)
         if best_key is None or key < best_key:
             best_key = key
             best_res = (idx, sh, live, risk)
@@ -135,16 +138,17 @@ def advise_pong(
             verdict = "建议碰"
             summary = f"碰{label(tile.index)}打{label(disc_idx)}提速 1 步({sh_no}→{sh_yes}向听, 进张 {live_yes} 张)"
     elif sh_yes == sh_no:
-        # 四川血战允许不退向听碰牌: 进张不亏或做对对胡/残局冲听时可碰提节奏
-        toitoi_push = melds >= 2 and live_yes >= max(1, live_no - 3)
-        endgame_push = state.wall_count <= ENDGAME_WALL and sh_yes <= 1 and live_yes >= live_no - 2 and disc_risk < 0.14
-        if (live_yes >= live_no + 2 and disc_risk < 0.12) or toitoi_push or endgame_push:
+        # 严格限制不降向听的碰牌: 禁止 2+ 向听白白缩手增加点炮率, 仅对对胡/1向听大幅扩口/残局冲听允许
+        toitoi_push = melds >= 2 and live_yes >= max(1, live_no - 2) and disc_risk < 0.10
+        big_1sh_upgrade = sh_yes == 1 and live_yes >= live_no + 4 and disc_risk < 0.08
+        endgame_push = state.wall_count <= 14 and sh_yes == 1 and live_yes >= live_no and disc_risk < 0.10
+        if big_1sh_upgrade or toitoi_push or endgame_push:
             verdict = "可碰"
             summary = f"碰{label(tile.index)}向听保持 {sh_yes}, 进张/节奏占优({live_no}→{live_yes}张)"
         else:
             verdict = "建议不碰"
-            summary = f"假提速:碰{label(tile.index)}不降向听({sh_no}→{sh_yes}), 且进张缩水({live_no}→{live_yes}张)"
-            reasons.append("白白亮出副露缩小手牌腾挪空间")
+            summary = f"假提速:碰{label(tile.index)}不降向听({sh_no}→{sh_yes}), 进张({live_no}→{live_yes}张)不足以补偿缩手风险"
+            reasons.append("白白亮出副露缩小手牌腾挪与避炮空间")
     else:
         verdict = "不建议碰"
         summary = f"碰{label(tile.index)}反而退向听({sh_no}→{sh_yes})"
@@ -183,13 +187,16 @@ def advise_kong(
     if kong_kind == "concealed":
         income = 2 * base * active_n
         reasons.append(f"暗杠立收 {income} 分({active_n} 家各付 {2 * base} 分), 不怕抢杠且 +1 根")
-        if sh_after > sh_before and sh_before <= 1:
-            verdict = "权衡"
-            summary = f"暗杠{label(tile.index)}立收 {income} 分, 但临听拆顺子退向听({sh_before}→{sh_after})"
-        elif late_far_unready:
+        if late_far_unready:
             verdict = "慎杠"
             summary = f"残局远未听牌暗杠{label(tile.index)}: 若流局无叫将全额退回这 {income} 分杠钱"
             reasons.append(f"牌墙仅余 {state.wall_count} 张且杠后仍 {sh_after} 向听, 流局查叫会退税")
+        elif sh_after > sh_before and sh_before == 0:
+            verdict = "权衡"
+            summary = f"暗杠{label(tile.index)}立收 {income} 分, 但会拆听({sh_before}→{sh_after}向听)"
+        elif sh_after > sh_before and sh_before == 1 and not (active_n >= 2 and state.wall_count >= 20):
+            verdict = "权衡"
+            summary = f"暗杠{label(tile.index)}收 {income} 分, 但中后盘拆搭退向听({sh_before}→{sh_after})"
         else:
             verdict = "建议暗杠"
             summary = f"暗杠{label(tile.index)}稳收 {income} 分 + 1 根(杠后向听 {sh_after})"
@@ -202,15 +209,15 @@ def advise_kong(
         elif late_far_unready:
             verdict = "慎杠"
             summary = f"残局远未听牌明杠{label(tile.index)}: 流局无叫要退杠钱, 且杠后打出生张有杠转水风险"
-        elif max_tp >= 0.85 and sh_after >= 2:
+        elif max_tp >= 0.85 and sh_after >= 2 and state.wall_count <= 18:
             verdict = "权衡"
-            summary = f"明杠{label(tile.index)}收 {income} 分, 但对手极可能已听({max_tp:.0%})且己方尚远, 需防杠转水"
+            summary = f"明杠{label(tile.index)}收 {income} 分, 但残局对手极可能已听({max_tp:.0%})且己方尚远, 需防杠转水"
         else:
             verdict = "建议明杠"
             summary = f"明杠{label(tile.index)}稳收 {income} 分 + 1 根(杠后向听 {sh_after})"
     else:  # added
         reasons.append("补杠不收杠钱, 收益为 +1 根(+1 番) 与 1 次杠上补牌")
-        if tile_dealin_prob >= 0.12:
+        if tile_dealin_prob >= 0.10:
             verdict = "慎补杠"
             summary = f"补杠{label(tile.index)}有较高被抢杠胡风险(估计约 {tile_dealin_prob:.0%}), 且无直接杠钱"
         elif sh_after > sh_before and sh_before <= 1:

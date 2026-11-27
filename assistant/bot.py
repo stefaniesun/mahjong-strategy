@@ -172,7 +172,7 @@ class AssistantPolicy(BasePolicy):
 
             if pong_act is not None:
                 pa = advise_pong(state, hand, tile, discarder, eff_unseen, risk_by_idx)
-                if pa["verdict"] in ("强烈建议碰", "建议碰", "可碰", "权衡"):
+                if pa["verdict"] in ("强烈建议碰", "建议碰", "可碰"):
                     return pong_act
             return pass_act
 
@@ -209,7 +209,7 @@ class AssistantPolicy(BasePolicy):
             ranked = own_info["discard_v2_options"]
         else:
             ranked = score_discard_candidates_v2(
-                state, hand, counts, own_info["candidates"], danger_rows, opp_reads, config=self.discard_config
+                state, hand, counts, own_info["candidates"], danger_rows, opp_reads, config=self.discard_config, floors=floors
             )
         if self.stochastic:
             chosen_idx = sample_discard_v2_index(ranked, rng=self.rng, top_k=2, max_gap=0.10, temperature=0.03)

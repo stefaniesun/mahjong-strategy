@@ -4,5 +4,15 @@
   "git_subject": "feat(assistant): v3 upgrade - tsumogiri/pass read, 1-shanten good-wait & pong speedup, kong/pong reclaim, cache cap",
   "created_at": "2026-11-27 11:41:07",
   "note": "摸切/手牌未变放过牌读牌 + 1向听好型前瞻 + 三家碰提速 + 杠钱追回 + 收紧随机抽样 + 缓存限额",
-  "benchmark": {}
+  "benchmark": {
+    "games": 10000,
+    "file": "outputs/arena_v2_vs_v3.json",
+    "rand_mean_score": 0.1301,
+    "rand_ci95": 0.0801,
+    "det_mean_score": 0.0806,
+    "det_ci95": 0.0836,
+    "vs_v2_det_diff": 0.0768,
+    "vs_s3_plus_diff": 0.1668,
+    "vs_s3_rule_diff": 0.3700
+  }
 }

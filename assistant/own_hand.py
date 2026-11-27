@@ -335,7 +335,9 @@ def analyze_own_hand(
         by_safe = sorted(candidates, key=lambda c: (c["dealin_prob"], c["shanten_after"], -c["live"], c["index"]))
         from assistant.discard_v2 import score_discard_candidates_v2
 
-        by_ev = score_discard_candidates_v2(state, hand, counts, by_speed, danger_rows=danger_rows, opp_reads=opp_reads)
+        by_ev = score_discard_candidates_v2(
+            state, hand, counts, by_speed, danger_rows=danger_rows, opp_reads=opp_reads, floors=floors
+        )
         ev_by_idx = {c["index"]: c for c in by_ev}
         for c in by_speed:
             ev_c = ev_by_idx[c["index"]]

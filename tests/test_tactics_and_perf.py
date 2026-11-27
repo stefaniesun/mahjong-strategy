@@ -125,3 +125,9 @@ def test_kong_advisor_reclaims_midgame_kong_and_warns_late_far():
     assert st10.wall_count == 10
     res_late = advise_kong(st10, h, parse_tile("1T"), "concealed", sh_before=2, sh_after=2, opp_reads={})
     assert res_late["verdict"] == "慎杠"
+
+    # 中盘(牌墙>20且3家在场)1->2向听暗杠: 立收6分+1根+补牌, 应果断"建议暗杠"
+    st_mid = make_state(own, voids={0: "W", 1: "W", 2: "T", 3: "B"})
+    assert st_mid.wall_count >= 20
+    res_1to2 = advise_kong(st_mid, h, parse_tile("1T"), "concealed", sh_before=1, sh_after=2, opp_reads={})
+    assert res_1to2["verdict"] == "建议暗杠"
