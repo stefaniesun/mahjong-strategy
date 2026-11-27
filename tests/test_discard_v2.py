@@ -118,3 +118,21 @@ def test_discard_v2_prefers_waiting_on_opponents_void_suit_and_terminal():
     ev_opts = {c["tile"]: c for c in rep.own_info["discard_v2_options"]}
     assert ev_opts["5筒"]["ev_score"] > ev_opts["9条"]["ev_score"]
     assert rep.own_info["discard_v2_pick"] == "5筒"
+
+
+def test_v5_fast_tenpai_fan_mult_distinguishes_big_hands_from_pinghu():
+    from assistant.discard_v2 import _fast_tenpai_fan_mult
+    from engine.hand import Hand
+    from engine.tiles import parse_tile
+
+    # 清一色听牌 (2番 -> 4.0x)
+    h_flush = Hand.from_tiles([parse_tile(t) for t in "1T 2T 3T 4T 5T 6T 7T 8T 9T 2T 3T 5T 5T".split()])
+    assert _fast_tenpai_fan_mult(list(h_flush.counts), h_flush.melds, [parse_tile("1T").index, parse_tile("4T").index]) >= 4.0
+
+    # 七对听牌 (2番 -> 4.0x)
+    h_7p = Hand.from_tiles([parse_tile(t) for t in "1T 1T 3T 3T 5T 5T 7T 7T 2B 2B 6B 6B 9B".split()])
+    assert _fast_tenpai_fan_mult(list(h_7p.counts), h_7p.melds, [parse_tile("9B").index]) >= 4.0
+
+    # 普通 0 番平胡 (1.0x)
+    h_plain = Hand.from_tiles([parse_tile(t) for t in "1T 2T 3T 4T 5T 6T 2B 3B 4B 6B 7B 9B 9B".split()])
+    assert _fast_tenpai_fan_mult(list(h_plain.counts), h_plain.melds, [parse_tile("5B").index, parse_tile("8B").index]) == 1.0

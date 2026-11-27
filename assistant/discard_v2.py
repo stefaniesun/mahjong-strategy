@@ -16,6 +16,7 @@ from dataclasses import dataclass
 from typing import Sequence
 
 from engine.hand import Hand
+from engine.meld import Meld, MeldKind
 from engine.tiles import SUITS, Suit
 
 from assistant.counting import TileCounts
@@ -60,6 +61,8 @@ def _opp_expected_deal_in_payout(opp: OpponentRead | None, base: int) -> float:
         est_fan += 1.0
     elif opp.n_melds == 2:
         est_fan += 0.35
+    if getattr(opp, "early_mid_alert", False) and opp.non_void_discards >= 4:
+        est_fan += 0.40
     est_fan += min(2.0, 0.85 * opp.n_kongs)
     return min(8.0, float(2.0 ** min(3.0, est_fan)))
 
@@ -126,16 +129,76 @@ def _seven_pairs_shanten_after(counts: list[int], void_idx: int | None) -> int:
     return 6 - pairs + max(0, 7 - unique)
 
 
+def _fast_tenpai_fan_mult(
+    counts13: list[int],
+    melds: Sequence[Meld],
+    waits: Sequence[int],
+) -> float:
+    """极速估算 0 向听手牌的番数倍率 (O(27) 零拷贝, <0.01ms): 覆盖清一色/七对/龙七对/对对胡/金钩钓/根。"""
+    fan = 0
+    # 1) 清一色: 所有暗牌 + 所有副露 + 至少一个听口同属一门
+    suits_present = 0
+    for s in (0, 1, 2):
+        base = s * 9
+        if any(counts13[base + r] > 0 for r in range(9)):
+            suits_present |= 1 << s
+    for m in melds:
+        suits_present |= 1 << SUITS.index(m.tiles[0].suit)
+    is_flush = suits_present in (1, 2, 4)
+    if is_flush:
+        only_suit = 0 if suits_present == 1 else (1 if suits_present == 2 else 2)
+        if any(w // 9 == only_suit for w in waits):
+            fan += 2
+
+    # 2) 七对 / 龙七对
+    n_melds = len(melds)
+    roots = 0
+    pairs = 0
+    triplets = 0
+    singles = 0
+    for c in counts13:
+        if c == 4:
+            roots += 1
+            pairs += 2
+        elif c == 3:
+            triplets += 1
+        elif c == 2:
+            pairs += 1
+        elif c == 1:
+            singles += 1
+    for m in melds:
+        if m.kind is MeldKind.KONG:
+            roots += 1
+        elif m.kind is MeldKind.PONG and counts13[m.tiles[0].index] >= 1:
+            roots += 1
+
+    if n_melds == 0 and pairs >= 6 and singles <= 1:
+        fan += 2  # 七对 (龙七对的根已在 roots 里 +1)
+    elif n_melds == 4:
+        fan += 2  # 金钩钓 + 对对胡
+    elif singles == 0 and (triplets + pairs + n_melds) == 5 and pairs == 2:
+        fan += 1  # 双碰对对胡听牌
+    elif singles == 1 and pairs == 0 and (triplets + n_melds) == 4:
+        fan += 1  # 单钓对对胡听牌
+
+    fan += roots
+    return float(2.0 ** min(3, fan))
+
+
 def _one_shanten_good_wait_quality(
     counts13: list[int],
     fixed_melds: int,
     void_idx: int | None,
     useful: list[dict],
     unseen: tuple[int, ...],
+    *,
+    melds: Sequence[Meld] = (),
+    state: AssistantState | None = None,
+    floors: dict[int, list[int]] | None = None,
 ) -> float:
-    """1向听两步前瞻: 按每种有效进张的剩余张数加权, 计算摸入后最佳听牌宽度的 log1p 期望。
+    """1向听两步前瞻: 综合摸入有效张后的听牌宽度、对手缺门/边幺听口质量与预计番数倍率。
 
-    两面好型(听 6-8 张)明显高于边嵌/单钓死口(听 2-3 张), 帮助 1 向听优先留两面好搭。
+    两面好型(听 6-8 张)与大番路线(清一色/七对/对对胡/带根)显著高于 0 番边嵌死口。
     """
     total_w = 0
     acc = 0.0
@@ -145,21 +208,28 @@ def _one_shanten_good_wait_quality(
             continue
         u_idx = u_row["index"]
         counts13[u_idx] += 1
-        best_wait_live = 0
-        # 寻找摸入 u_idx 后能立即听牌(sh==0)的最大胡口剩余张数
+        best_wait_ev = 0.0
+        # 寻找摸入 u_idx 后能立即听牌(sh==0)的最大「加权胡口 x 番数倍率」
         for d in range(27):
             if counts13[d] <= 0 or d == u_idx:
                 continue
             counts13[d] -= 1
             if fast_shanten_hand(counts13, fixed_melds, void_idx) == 0:
                 ws = fast_useful_indices(counts13, fixed_melds, void_idx, 0)
-                w_live = sum(unseen[w] for w in ws)
-                if w_live > best_wait_live:
-                    best_wait_live = w_live
+                if ws:
+                    if state is not None:
+                        w_live = sum(unseen[w] * _wait_quality_multiplier(w, state, floors) for w in ws)
+                    else:
+                        w_live = float(sum(unseen[w] for w in ws))
+                    f_mult = _fast_tenpai_fan_mult(counts13, melds, ws) if w_live > 0 else 1.0
+                    # 用 sqrt 温和压缩番数倍率, 防止 1 向听过度贪大番而放弃好型
+                    cand_ev = w_live * (f_mult ** 0.55)
+                    if cand_ev > best_wait_ev:
+                        best_wait_ev = cand_ev
             counts13[d] += 1
         counts13[u_idx] -= 1
         total_w += rem
-        acc += rem * math.log1p(best_wait_live)
+        acc += rem * math.log1p(best_wait_ev)
     return (acc / total_w) if total_w > 0 else 0.0
 
 
@@ -404,7 +474,7 @@ def score_discard_candidates_v2(
             # 不轻易拆 4 张根
             if hand.counts[idx] == 4:
                 fan_pot -= config.w_root_keep
-            # 1 向听两步听牌好型率(仅对竞争 1 向听候选精算, 兼顾精度与毫秒级延迟)
+            # 1 向听两步听牌好型+番数期望(仅对竞争 1 向听候选精算, 兼顾精度与毫秒级延迟)
             if (
                 config.w_good_wait_1sh > 0.0
                 and best_sh == 1
@@ -413,7 +483,14 @@ def score_discard_candidates_v2(
                 and live >= max(1, best_live_at_min_sh - 12)
             ):
                 gw = _one_shanten_good_wait_quality(
-                    base_counts, len(hand.melds), void_idx, c.get("useful") or [], counts.unseen
+                    base_counts,
+                    len(hand.melds),
+                    void_idx,
+                    c.get("useful") or [],
+                    counts.unseen,
+                    melds=hand.melds,
+                    state=state,
+                    floors=floors,
                 )
                 good_wait_term = config.w_good_wait_1sh * gw
             # 1~2 向听可碰对子提速进张(非七对路线)
@@ -463,6 +540,118 @@ def score_discard_candidates_v2(
 
     scored.sort(key=lambda item: (-item["ev_score"], item["shanten_after"], -item["live"], item["index"]))
     return scored
+
+
+def evaluate_hand_ev_state(
+    state: AssistantState,
+    hand: Hand,
+    counts: TileCounts,
+    eff_unseen: tuple[int, ...],
+    *,
+    opp_reads: dict[int, OpponentRead] | None = None,
+    floors: dict[int, list[int]] | None = None,
+    config: DiscardV2Config = DEFAULT_DISCARD_V2_CONFIG,
+    compute_1sh_lookahead: bool = True,
+) -> tuple[float, int, int, int | None]:
+    """用与 discard_v2 完全一致的度量衡, 评估任意 3k+1 手牌的静态综合期望值(EV)。
+
+    供碰牌/不碰参谋做同口径 EV 对比(彻底消灭“好牌碰烂”与“漏碰大番”)。
+    返回: (ev_score, shanten, live, max_fan)
+    """
+    from assistant.own_hand import wait_table
+
+    void_code = state.me.void_suit
+    void_suit = Suit(void_code) if void_code else None
+    void_idx = SUITS.index(void_suit) if void_suit is not None else None
+    base_score = max(1, state.rule_config.base_score)
+    reads = opp_reads or {}
+    active_n = max(1, len(state.active_opponents()))
+    fixed_melds = len(hand.melds)
+
+    sh = fast_shanten_hand(hand.counts, fixed_melds, void_idx)
+    useful_idxs = fast_useful_indices(hand.counts, fixed_melds, void_idx, sh)
+    useful = [{"index": u, "remaining": eff_unseen[u]} for u in useful_idxs]
+    live = sum(u["remaining"] for u in useful)
+
+    endgame_chajiao_value = 0.0
+    if 0 < state.wall_count <= 18:
+        exp_chajiao = sum(r.tenpai_prob * _opp_expected_deal_in_payout(r, base_score) for r in reads.values())
+        refund = _kong_refund_exposure(state) / base_score
+        endgame_chajiao_value = config.w_endgame_chajiao * (exp_chajiao + refund)
+
+    max_fan: int | None = None
+    if sh == 0:
+        waits = wait_table(hand, void_suit, counts, state, eff_unseen)
+        if waits and live > 0:
+            max_fan = max((w["fan"] for w in waits if w["remaining"] > 0), default=max(w["fan"] for w in waits))
+            ron_w = 0.68 if active_n >= 3 else (0.62 if active_n == 2 else 0.52)
+            tsumo_w = 1.0 - ron_w
+            raw_win_ev = 0.0
+            for w in waits:
+                rem = w["remaining"]
+                if rem <= 0:
+                    continue
+                w_idx = tidx(from_label(w["tile"]))
+                q_mult = _wait_quality_multiplier(w_idx, state, floors)
+                ron_s = w["ron_score"] / base_score
+                tsumo_s = (w["tsumo_each"] * max(1, w["tsumo_payers"])) / base_score
+                raw_win_ev += rem * q_mult * (ron_w * ron_s + tsumo_w * tsumo_s)
+            offense = config.w_tenpai_ev * math.log1p(raw_win_ev) + endgame_chajiao_value
+        else:
+            offense = -config.w_dead_wait_pen + endgame_chajiao_value
+        return offense, sh, live, max_fan
+
+    offense = -config.w_shanten * sh + config.w_live_log * math.log1p(live)
+    base_counts = list(hand.counts)
+
+    # 大番潜力(清一色 / 七对 / 对对胡 / 根)
+    suit_totals = [sum(base_counts[s * 9 : (s + 1) * 9]) for s in range(3)]
+    meld_suits: set[int] = set()
+    for m in hand.melds:
+        ms = SUITS.index(m.tiles[0].suit)
+        suit_totals[ms] += 3
+        meld_suits.add(ms)
+    dom_suit = max(range(3), key=lambda s: suit_totals[s])
+    fan_pot = 0.0
+    if (
+        suit_totals[dom_suit] >= 10
+        and dom_suit != void_idx
+        and sh <= 2
+        and (not meld_suits or meld_suits == {dom_suit})
+    ):
+        fan_pot += config.w_flush_pot
+    sp_sh = _seven_pairs_shanten_after(base_counts, void_idx) if fixed_melds == 0 else 99
+    if fixed_melds == 0 and sp_sh <= 1:
+        fan_pot += config.w_seven_pairs
+    elif fixed_melds >= 2 and sh <= 2:
+        pairs_kept = sum(1 for i, cnt in enumerate(base_counts) if cnt >= 2 and (void_idx is None or i // 9 != void_idx))
+        if fixed_melds + pairs_kept >= 4:
+            fan_pot += config.w_toitoi_pot
+    roots = sum(1 for cnt in base_counts if cnt == 4) + sum(1 for m in hand.melds if m.kind is MeldKind.KONG)
+    fan_pot += 0.14 * roots
+
+    good_wait_term = 0.0
+    if compute_1sh_lookahead and config.w_good_wait_1sh > 0.0 and sh == 1 and live > 0:
+        gw = _one_shanten_good_wait_quality(
+            base_counts,
+            fixed_melds,
+            void_idx,
+            useful,
+            eff_unseen,
+            melds=hand.melds,
+            state=state,
+            floors=floors,
+        )
+        good_wait_term = config.w_good_wait_1sh * gw
+
+    pong_term = 0.0
+    if config.w_pong_speedup > 0.0 and sh in (1, 2) and not (fixed_melds == 0 and sp_sh <= 1):
+        p_outs = _pong_speedup_outs(base_counts, fixed_melds, void_idx, sh, eff_unseen)
+        if p_outs > 0:
+            pong_term = config.w_pong_speedup * math.log1p(p_outs)
+
+    shape_term = config.w_shape_conn * _shape_quality(base_counts, void_idx)
+    return offense + good_wait_term + pong_term + fan_pot + shape_term, sh, live, max_fan
 
 
 def discard_v2_sampling_probs(

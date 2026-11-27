@@ -171,7 +171,18 @@ class AssistantPolicy(BasePolicy):
                     return kong_act
 
             if pong_act is not None:
-                pa = advise_pong(state, hand, tile, discarder, eff_unseen, risk_by_idx)
+                pa = advise_pong(
+                    state,
+                    hand,
+                    tile,
+                    discarder,
+                    eff_unseen,
+                    risk_by_idx,
+                    counts=counts,
+                    danger_rows=danger_rows,
+                    opp_reads=opp_reads,
+                    floors=floors,
+                )
                 if pa["verdict"] in ("强烈建议碰", "建议碰", "可碰"):
                     return pong_act
             return pass_act

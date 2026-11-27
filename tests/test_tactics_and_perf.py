@@ -131,3 +131,33 @@ def test_kong_advisor_reclaims_midgame_kong_and_warns_late_far():
     assert st_mid.wall_count >= 20
     res_1to2 = advise_kong(st_mid, h, parse_tile("1T"), "concealed", sh_before=1, sh_after=2, opp_reads={})
     assert res_1to2["verdict"] == "建议暗杠"
+
+
+def test_v5_unified_ev_pong_exposes_ev_breakdown_and_avoids_degrading_good_tenpai():
+    # 1) 已听两面好口(45T 听 3T/6T 共 8 张), 对手打 9T -> 碰 9T 会拆雀头退回 1 向听, 统一 EV 应算得 delta_ev < 0 并拒碰
+    own = "1B 2B 3B 4B 5B 6B 7B 8B 9B 4T 5T 9T 9T".split()
+    st = make_state(
+        own,
+        voids={0: "W", 1: "W", 2: "W", 3: "W"},
+        pending_discard=(2, "9T"),
+        rivers={2: ["9T"]},
+        hidden={1: 13, 2: 13, 3: 13},
+    )
+    rep = analyze(st)
+    assert not rep.errors
+    pong_f = next(f for f in rep.sections["alerts"] if f.title.startswith("碰9条"))
+    assert "EV" in "\n".join(pong_f.basis)
+    assert "建议不碰" in pong_f.title
+
+    # 2) 中盘碰完只剩死听口 -> 统一 EV 自动避开死听并给出"建议不碰"或"慎碰"
+    own_dead = "1T 2T 3T 4T 5T 6T 5B 6B 7B 9B 9B 1B 8T".split()
+    st_dead = make_state(
+        own_dead,
+        voids={0: "W", 1: "W", 2: "W", 3: "W"},
+        pending_discard=(2, "9B"),
+        rivers={1: ["1B", "1B", "1B"], 2: ["9B"], 3: ["8T", "8T", "8T"]},
+        hidden={1: 13, 2: 13, 3: 13},
+    )
+    rep_dead = analyze(st_dead)
+    pong_d = next(f for f in rep_dead.sections["alerts"] if f.title.startswith("碰9筒"))
+    assert "建议不碰" in pong_d.title or "慎碰" in pong_d.title

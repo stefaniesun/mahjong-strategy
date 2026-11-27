@@ -170,3 +170,26 @@ def test_passed_since_tedashi_and_tsumogiri_signal():
     for s in range(4):
         assert len(ast.players[s].discard_tsumogiri) == len(ast.players[s].discards)
         assert isinstance(ast.players[s].passed_since_tedashi, tuple)
+
+
+def test_kabe_wall_of_4_and_early_mid_discard_alert():
+    # 牌面出现全部 4 张 8条(壁断搭) -> 9条对下家点炮概率应明显低于无壁断搭的 1条, 且带上"壁断搭"标签
+    # 同时下家 0 副露前 3 张非缺门弃牌为 4B/5B/6B -> 触发 early_mid_alert
+    own = "1T 9T 8T 8T 2B 3B 4B 5B 6B 7B 8B 9B 2T 3T".split()
+    st = make_state(
+        own,
+        voids={0: "W", 1: "W", 2: "T", 3: "B"},
+        rivers={1: ["1W", "4B", "5T", "6B", "2B"], 2: ["8T", "8T"]},
+        hidden={1: 13, 2: 13, 3: 13},
+    )
+    rep = analyze(st)
+    assert not rep.errors
+    r1 = next(r for r in rep.opponent_reads if r["seat"] == 1)
+    assert r1["early_mid_alert"] is True
+    assert any("早巡切中张" in t for t in r1["threats"])
+
+    by_tile = {row["tile"]: row for row in rep.danger_rows}
+    e_9t = next(e for e in by_tile["9条"]["per_opponent"] if e["seat"] == 1)
+    e_1t = next(e for e in by_tile["1条"]["per_opponent"] if e["seat"] == 1)
+    assert any("壁断搭" in tag for tag in e_9t["risk_tags"])
+    assert e_9t["dealin_prob"] < e_1t["dealin_prob"] * 0.65

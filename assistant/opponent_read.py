@@ -44,6 +44,7 @@ class OpponentRead:
     flush_suit: str | None  # "W"/"T"/"B" if flush threat detected
     flush_level: str | None  # "strong" / "watch"
     toitoi_alert: str | None
+    early_mid_alert: bool
     threats: tuple[str, ...]
     basis: tuple[str, ...]
     # 供单张点炮率快速查表的预计算结构
@@ -67,6 +68,7 @@ class OpponentRead:
             "flush_suit": suit_label(self.flush_suit) if self.flush_suit else None,
             "flush_level": self.flush_level,
             "toitoi_alert": self.toitoi_alert,
+            "early_mid_alert": self.early_mid_alert,
             "threats": list(self.threats),
             "basis": list(self.basis),
         }
@@ -202,6 +204,16 @@ def read_opponent(
     if n_kongs >= 1:
         threats.append(f"已开 {n_kongs} 杠(带根高番)")
 
+    # 大牌型预警: 3) 0副露早巡连切中张(4/5/6) -> 150局实测七对/清一色概率升 2.5x+
+    nv_disc_tiles = [disc_idx[pos] for pos in nv_positions]
+    early_mid_alert = bool(
+        n_melds == 0
+        and len(nv_disc_tiles) >= 3
+        and sum(1 for t in nv_disc_tiles[:3] if 4 <= rank_of(t) <= 6) >= 2
+    )
+    if early_mid_alert and flush_level is None:
+        threats.append("早巡切中张(留意七对/染手)")
+
     return OpponentRead(
         seat=view.seat,
         name=who,
@@ -215,6 +227,7 @@ def read_opponent(
         flush_suit=flush_suit,
         flush_level=flush_level,
         toitoi_alert=toitoi_alert,
+        early_mid_alert=early_mid_alert,
         threats=tuple(threats),
         basis=tuple(basis),
         disc_set=disc_set,
@@ -275,6 +288,25 @@ def estimate_dealin_prob(
             if suji_low and suji_high:
                 wait_p *= 0.60
                 tags.append("双筋熟张")
+
+        # 3b) Kabe 壁断搭修正(150局 21,805 次实测校准):
+        # 1/9 边幺在邻近 2/3 或 7/8 全部四张已现(unseen==0)时, 顺子搭完全断绝, 点炮率暴降一半 (9.4% -> 4.6%)
+        # 3-7 中张相邻牌全部已现时, 单壁降约 14% (0.86x), 双壁降约 22% (0.78x)
+        if r == 1 and (counts.unseen[base_s + 1] == 0 or counts.unseen[base_s + 2] == 0):
+            wait_p *= 0.52
+            tags.append("壁断搭(边幺无顺口)")
+        elif r == 9 and (counts.unseen[base_s + 7] == 0 or counts.unseen[base_s + 6] == 0):
+            wait_p *= 0.52
+            tags.append("壁断搭(边幺无顺口)")
+        elif 3 <= r <= 7:
+            left_dead = counts.unseen[tile_idx - 1] == 0
+            right_dead = counts.unseen[tile_idx + 1] == 0
+            if left_dead and right_dead:
+                wait_p *= 0.78
+                tags.append("双壁断搭(无顺口)")
+            elif left_dead or right_dead:
+                wait_p *= 0.86
+                tags.append("单壁断搭")
 
         # 4) 牌河花色偏向 & 清一色目标门
         d_this = opp_read.nv_disc_by_suit.get(t_suit, 0)

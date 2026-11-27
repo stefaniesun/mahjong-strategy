@@ -13,7 +13,12 @@ from engine.hand import Hand
 from engine.meld import Meld, MeldKind
 from engine.tiles import SUITS, Suit, Tile, parse_tile
 
-from assistant.counting import TileCounts
+from assistant.counting import TileCounts, compute_counts
+from assistant.discard_v2 import (
+    DEFAULT_DISCARD_V2_CONFIG,
+    _opp_expected_deal_in_payout,
+    evaluate_hand_ev_state,
+)
 from assistant.opponent_read import OpponentRead
 from assistant.own_hand import (
     build_own_hand,
@@ -44,33 +49,97 @@ def _seven_pairs_shanten_counts(counts: Sequence[int], void_idx: int | None) -> 
     return 6 - pairs + max(0, 7 - unique)
 
 
-def _best_post_pong_discard(
-    hand: Hand,
+def _post_pong_exp_dealin_loss(
+    tile_idx: int,
+    danger_by_tile: dict[str, dict],
+    opp_reads: dict[int, OpponentRead],
+    risk_by_idx: dict[int, float],
+    base_score: int,
+) -> float:
+    d_row = danger_by_tile.get(label(tile_idx))
+    if d_row is not None:
+        if d_row.get("safe_all"):
+            return 0.0
+        loss = 0.0
+        for e in d_row.get("per_opponent", ()):
+            dp = e.get("dealin_prob", 0.0)
+            if dp > 0.0:
+                loss += dp * _opp_expected_deal_in_payout(opp_reads.get(e["seat"]), base_score)
+        return loss
+    return risk_by_idx.get(tile_idx, 0.0) * 1.8
+
+
+def _best_post_pong_discard_ev(
+    state: AssistantState,
+    after: Hand,
     void: Suit | None,
+    counts: TileCounts,
     eff_unseen: tuple[int, ...],
     risk_by_idx: dict[int, float],
-) -> tuple[int, int, int, float]:
-    """碰牌后(手里 3k+2 张)找最优弃牌, 返回 (disc_idx, sh_after, live_after, dealin_prob)。"""
-    best_key = None
-    best_res = (0, 99, 0, 0.0)
+    danger_rows: list[dict] | None,
+    opp_reads: dict[int, OpponentRead],
+    floors: dict[int, list[int]] | None,
+) -> tuple[int, int, int, float, float, int | None]:
+    """碰牌后(手里 3k+2 张)按统一 discard_v2 EV 找最优弃牌。
+
+    返回: (disc_idx, sh_after, live_after, dealin_prob, best_ev, max_fan)
+    """
     void_idx = SUITS.index(void) if void is not None else None
-    melds = len(hand.melds)
-    counts = list(hand.counts)
-    for idx in range(27):
-        if counts[idx] <= 0:
+    melds = len(after.melds)
+    base_score = max(1, state.rule_config.base_score)
+    danger_by_tile = {r["tile"]: r for r in (danger_rows or [])}
+    cfg = DEFAULT_DISCARD_V2_CONFIG
+
+    # 如有缺门牌, 优先限制在缺门牌里挑最优弃牌
+    present = [idx for idx in range(27) if after.counts[idx] > 0]
+    void_present = [idx for idx in present if void_idx is not None and idx // 9 == void_idx]
+    cands = void_present if void_present else present
+
+    # 先快速算一遍各候选打后向听, 只对 min_sh 与 min_sh+1 做完整 EV 精算(保持 <0.5ms)
+    sh_map: dict[int, int] = {}
+    cnts = list(after.counts)
+    for idx in cands:
+        cnts[idx] -= 1
+        sh_map[idx] = fast_shanten_hand(cnts, melds, void_idx)
+        cnts[idx] += 1
+    min_sh = min(sh_map.values())
+
+    best_key = None
+    best_res: tuple[int, int, int, float, float, int | None] = (cands[0], 99, 0, 0.0, -999.0, None)
+    for idx in cands:
+        sh_d = sh_map[idx]
+        if sh_d > min_sh + 1:
             continue
-        counts[idx] -= 1
-        sh = fast_shanten_hand(counts, melds, void_idx)
-        useful = fast_useful_indices(counts, melds, void_idx, sh)
-        live = sum(eff_unseen[u] for u in useful)
+        trial = copy_hand(after)
+        trial.remove(Tile.from_index(idx))
+        h_ev, sh_val, live_val, fan_val = evaluate_hand_ev_state(
+            state,
+            trial,
+            counts,
+            eff_unseen,
+            opp_reads=opp_reads,
+            floors=floors,
+            config=cfg,
+            compute_1sh_lookahead=(sh_d == min_sh),
+        )
+        # 与 discard_v2 一致的动态防守乘数
+        if min_sh == 0:
+            def_mult = 0.72 if state.wall_count > 16 else 0.90
+            if (fan_val or 0) >= 2:
+                def_mult *= 0.80
+            elif (fan_val or 0) == 0 and live_val <= 3:
+                def_mult *= 1.22
+        elif min_sh == 1:
+            def_mult = 1.00 if state.wall_count > 18 else 1.25
+        else:
+            def_mult = 2.50 if state.wall_count <= 14 else (1.85 if state.wall_count <= 24 else 1.20)
+        exp_loss = _post_pong_exp_dealin_loss(idx, danger_by_tile, opp_reads, risk_by_idx, base_score)
+        total_ev = h_ev - cfg.w_defense * def_mult * exp_loss
         risk = risk_by_idx.get(idx, 0.0)
-        # 攻防平衡排序: 向听优先, 同向听下兼顾有效进张与弃牌点炮风险, 防止为多1张进张去打高危炮牌
-        ev_score = math.log1p(live) - 3.2 * risk
-        key = (sh, -ev_score, risk, idx)
+        key = (-total_ev, sh_val, -live_val, risk, idx)
         if best_key is None or key < best_key:
             best_key = key
-            best_res = (idx, sh, live, risk)
-        counts[idx] += 1
+            best_res = (idx, sh_val, live_val, risk, total_ev, fan_val)
     return best_res
 
 
@@ -81,23 +150,38 @@ def advise_pong(
     discarder: int,
     eff_unseen: tuple[int, ...],
     risk_by_idx: dict[int, float],
+    *,
+    counts: TileCounts | None = None,
+    danger_rows: list[dict] | None = None,
+    opp_reads: dict[int, OpponentRead] | None = None,
+    floors: dict[int, list[int]] | None = None,
 ) -> dict:
-    """评估碰 tile 的实战利弊, 返回结构化建议与依据。"""
+    """按统一 discard_v2 EV 口径评估碰 tile 与不碰的实战净收益, 返回结构化建议与依据。"""
     void = own_void(state)
     void_idx = SUITS.index(void) if void is not None else None
     melds = len(hand.melds)
+    t_counts = counts if counts is not None else compute_counts(state)
+    reads = opp_reads or {}
 
-    sh_no = fast_shanten_hand(hand.counts, melds, void_idx)
-    useful_no = fast_useful_indices(hand.counts, melds, void_idx, sh_no)
-    live_no = sum(eff_unseen[u] for u in useful_no)
+    pass_ev, sh_no, live_no, fan_no = evaluate_hand_ev_state(
+        state,
+        hand,
+        t_counts,
+        eff_unseen,
+        opp_reads=reads,
+        floors=floors,
+        config=DEFAULT_DISCARD_V2_CONFIG,
+    )
 
     after = copy_hand(hand)
     after.remove(tile)
     after.remove(tile)
     after.melds.append(Meld(MeldKind.PONG, (tile,) * 3, exposed=True, from_player=discarder))
-    disc_idx, sh_yes, live_yes, disc_risk = _best_post_pong_discard(after, void, eff_unseen, risk_by_idx)
+    disc_idx, sh_yes, live_yes, disc_risk, pong_ev, fan_yes = _best_post_pong_discard_ev(
+        state, after, void, t_counts, eff_unseen, risk_by_idx, danger_rows, reads, floors
+    )
 
-    # 牌型结构影响检查
+    # 牌型结构硬护栏检查
     breaks_seven_pairs = (
         melds == 0
         and _seven_pairs_shanten_counts(hand.counts, void_idx) <= 1
@@ -109,10 +193,22 @@ def advise_pong(
     dom_suit = max(range(3), key=lambda s: suit_totals[s])
     breaks_flush = suit_totals[dom_suit] >= 10 and SUITS.index(tile.suit) != dom_suit
 
+    # 节奏与缩手成本修正:
+    # - 降向听碰: 跳过中间家立得节奏红利, 扣除亮副露缩手成本后净微调 (-0.10; 残局直接听牌 +0.15)
+    # - 不降向听碰: 无速度增益却缩手 3 张暗牌 (-0.35), 仅当牌质/进张/对对胡净增益足以覆盖才碰
+    # - 退向听碰: 强惩罚 (-0.65)
+    if sh_yes < sh_no:
+        tempo_adj = 0.15 if (sh_yes == 0 and state.wall_count <= ENDGAME_WALL) else -0.10
+    elif sh_yes == sh_no:
+        tempo_adj = -0.35
+    else:
+        tempo_adj = -0.65
+    delta_ev = pong_ev - pass_ev + tempo_adj
+
     reasons: list[str] = [
-        f"不碰:向听 {sh_no}, 有效进张 {live_no} 张",
-        f"碰后打{label(disc_idx)}:向听 {sh_yes}, 有效进张 {live_yes} 张"
-        + (f"(点炮风险约 {disc_risk:.0%})" if disc_risk > 0 else "(安全)"),
+        f"不碰:向听 {sh_no}, 有效进张 {live_no} 张 (EV {pass_ev:+.2f})",
+        f"碰后打{label(disc_idx)}:向听 {sh_yes}, 有效进张 {live_yes} 张 (EV {pong_ev:+.2f}, 净差 {delta_ev:+.2f})"
+        + (f" | 弃牌点炮风险约 {disc_risk:.0%}" if disc_risk > 0 else " | 弃牌安全"),
     ]
 
     if breaks_seven_pairs:
@@ -123,35 +219,40 @@ def advise_pong(
         verdict = "建议不碰"
         summary = f"碰{label(tile.index)}会破坏清一色路线(主花色已有 {suit_totals[dom_suit]} 张)"
         reasons.append("保持清一色大番潜力优先")
+    elif sh_yes == 0 and live_yes == 0 and state.wall_count > 14:
+        verdict = "慎碰"
+        summary = f"碰{label(tile.index)}虽立即听牌, 但听口已绝(死听)"
+        reasons.append("中盘不建议碰成死听, 留手牌改听更好")
+    elif sh_yes > sh_no and delta_ev < 0.25:
+        verdict = "不建议碰"
+        summary = f"碰{label(tile.index)}反而退向听({sh_no}→{sh_yes}, 净EV {delta_ev:+.2f})"
+    elif sh_yes == 0 and state.wall_count <= ENDGAME_WALL and delta_ev >= 0.15:
+        verdict = "强烈建议碰"
+        summary = f"残局碰{label(tile.index)}打{label(disc_idx)}直接听牌保叫(剩 {live_yes} 张胡口, 净EV {delta_ev:+.2f})"
     elif sh_yes < sh_no:
-        if sh_yes == 0 and live_yes == 0:
-            verdict = "慎碰"
-            summary = f"碰{label(tile.index)}虽立即听牌, 但听口已绝(死听)"
-            reasons.append("除非残局急需保叫免查叫, 否则不建议碰成死听")
-        elif sh_yes == 0 and state.wall_count <= ENDGAME_WALL:
-            verdict = "强烈建议碰"
-            summary = f"残局碰{label(tile.index)}打{label(disc_idx)}直接听牌保叫(剩 {live_yes} 张胡口)"
-        elif disc_risk >= 0.16 and sh_yes > 0:
+        if delta_ev >= 0.15:
+            if disc_risk >= 0.16 and sh_yes > 0 and delta_ev < 0.70:
+                verdict = "权衡"
+                summary = f"碰{label(tile.index)}虽提速至 {sh_yes} 向听, 但弃牌{label(disc_idx)}点炮风险偏高({disc_risk:.0%})"
+            else:
+                verdict = "建议碰"
+                summary = f"碰{label(tile.index)}打{label(disc_idx)}提速({sh_no}→{sh_yes}向听, 净EV {delta_ev:+.2f})"
+        elif delta_ev >= -0.15:
             verdict = "权衡"
-            summary = f"碰{label(tile.index)}虽提速至 {sh_yes} 向听, 但碰后最优弃牌{label(disc_idx)}点炮风险偏高({disc_risk:.0%})"
-        else:
-            verdict = "建议碰"
-            summary = f"碰{label(tile.index)}打{label(disc_idx)}提速 1 步({sh_no}→{sh_yes}向听, 进张 {live_yes} 张)"
-    elif sh_yes == sh_no:
-        # 严格限制不降向听的碰牌: 禁止 2+ 向听白白缩手增加点炮率, 仅对对胡/1向听大幅扩口/残局冲听允许
-        toitoi_push = melds >= 2 and live_yes >= max(1, live_no - 2) and disc_risk < 0.10
-        big_1sh_upgrade = sh_yes == 1 and live_yes >= live_no + 4 and disc_risk < 0.08
-        endgame_push = state.wall_count <= 14 and sh_yes == 1 and live_yes >= live_no and disc_risk < 0.10
-        if big_1sh_upgrade or toitoi_push or endgame_push:
-            verdict = "可碰"
-            summary = f"碰{label(tile.index)}向听保持 {sh_yes}, 进张/节奏占优({live_no}→{live_yes}张)"
+            summary = f"碰{label(tile.index)}虽提速({sh_no}→{sh_yes}), 但听口/番数缩水或弃牌偏危(净EV {delta_ev:+.2f})"
         else:
             verdict = "建议不碰"
-            summary = f"假提速:碰{label(tile.index)}不降向听({sh_no}→{sh_yes}), 进张({live_no}→{live_yes}张)不足以补偿缩手风险"
-            reasons.append("白白亮出副露缩小手牌腾挪与避炮空间")
+            summary = f"好牌莫碰烂:不碰留牌质量更高(净EV {delta_ev:+.2f})"
+            reasons.append("综合进张、大番潜力与弃牌点炮风险, 留门清/原搭期望收益更高")
     else:
-        verdict = "不建议碰"
-        summary = f"碰{label(tile.index)}反而退向听({sh_no}→{sh_yes})"
+        # sh_yes == sh_no (或极少数退向听但大番净赚 >= 0.25)
+        if delta_ev >= 0.12 and disc_risk < 0.10:
+            verdict = "可碰"
+            summary = f"碰{label(tile.index)}牌质/番数占优({live_no}→{live_yes}张, 净EV {delta_ev:+.2f})"
+        else:
+            verdict = "建议不碰"
+            summary = f"假提速:碰{label(tile.index)}不降向听({sh_no}→{sh_yes}), 净EV {delta_ev:+.2f} 不足以补偿缩手风险"
+            reasons.append("白白亮出副露缩小手牌腾挪与避炮空间")
 
     return {
         "tile": label(tile.index),
@@ -163,6 +264,9 @@ def advise_pong(
         "live_yes": live_yes,
         "best_discard": label(disc_idx),
         "discard_risk": round(disc_risk, 4),
+        "pass_ev": round(pass_ev, 3),
+        "pong_ev": round(pong_ev, 3),
+        "delta_ev": round(delta_ev, 3),
         "reasons": reasons,
     }
 

@@ -142,7 +142,17 @@ def build_alerts(
                         )
                     )
         if hand.count(tile) >= 2:
-            pong_adv = advise_pong(state, hand, tile, discarder, eff_unseen, risk_by_idx)
+            pong_adv = advise_pong(
+                state,
+                hand,
+                tile,
+                discarder,
+                eff_unseen,
+                risk_by_idx,
+                counts=counts,
+                danger_rows=danger_rows,
+                opp_reads=reads,
+            )
             findings.append(
                 counted(
                     "alert",
