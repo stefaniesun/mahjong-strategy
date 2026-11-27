@@ -92,14 +92,22 @@ def _init_worker(policy_names: list[str], s4_path: str | None, s5_path: str | No
             pol, _ = load_ai("s5", Path(s5_path))
             _WORKER_POLICIES[name] = pol
         else:
-            raise ValueError(f"Unknown policy name: {name}")
+            from assistant.zoo import load_version, parse_zoo_spec
+
+            parsed = parse_zoo_spec(name)
+            if parsed is None:
+                raise ValueError(f"Unknown policy name: {name}")
+            ver, stoch = parsed
+            _WORKER_POLICIES[name] = load_version(ver, stochastic=stoch, exact_swap_live=False)
 
 
 def _play_one_game(seed: int, dealer: int, lineup: list[str], rand_seed: int) -> dict:
     """用给定 4 策略阵容 lineup[0..3] 打完一整局血战麻将。"""
-    # 若阵容含受控随机策略, 绑定可复现种子
-    if "assistant_rand" in _WORKER_POLICIES:
-        _WORKER_POLICIES["assistant_rand"].rng = random.Random(rand_seed)
+    # 若阵容含受控随机策略(含历史版本快照), 为每个策略实例绑定独立可复现种子
+    for idx, name in enumerate(sorted(set(lineup))):
+        pol = _WORKER_POLICIES.get(name)
+        if pol is not None and hasattr(pol, "rng"):
+            pol.rng = random.Random(rand_seed + idx * 17)
 
     game = Game(seed=seed, dealer=dealer)
     game.reset()
@@ -178,6 +186,12 @@ def _release_caches() -> None:
                     clear()
                 except Exception:
                     pass
+    try:
+        from assistant.zoo import clear_all_zoo_caches
+
+        clear_all_zoo_caches()
+    except Exception:
+        pass
 
 
 def _worker_run_deal_batch(args):

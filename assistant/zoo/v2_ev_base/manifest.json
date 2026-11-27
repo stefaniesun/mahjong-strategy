@@ -1,0 +1,15 @@
+{
+  "version": "v2_ev_base",
+  "git_commit": "8cb0cfc",
+  "git_subject": "feat(play): add AssistantPolicy (--ai assistant) using full swap_v2 + void_v3 + discard_v2 + tactics with controlled randomness",
+  "created_at": "2026-11-27 11:41:05",
+  "note": "初代完整全套 AssistantPolicy (swap_v2 + void_v3 + opponent_read + discard_v2 + tactics)",
+  "benchmark": {
+    "games": 10000,
+    "file": "outputs/arena_tournament_large.json",
+    "det_mean_score": 0.204,
+    "det_ci95": 0.086,
+    "rand_mean_score": 0.079,
+    "rand_ci95": 0.086
+  }
+}

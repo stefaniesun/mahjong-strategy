@@ -1,0 +1,8 @@
+{
+  "version": "v3_goodwait_read",
+  "git_commit": "3f0bcd9",
+  "git_subject": "feat(assistant): v3 upgrade - tsumogiri/pass read, 1-shanten good-wait & pong speedup, kong/pong reclaim, cache cap",
+  "created_at": "2026-11-27 11:41:07",
+  "note": "摸切/手牌未变放过牌读牌 + 1向听好型前瞻 + 三家碰提速 + 杠钱追回 + 收紧随机抽样 + 缓存限额",
+  "benchmark": {}
+}

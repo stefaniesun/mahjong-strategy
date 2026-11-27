@@ -20,7 +20,16 @@ def load_ai(kind: str, checkpoint: Path | None = None, s4_policy: Path = S4_POLI
     if kind == "assistant":
         from assistant.bot import AssistantPolicy
 
-        return AssistantPolicy(stochastic=True), "辅助器全套 AI (v2/v3)"
+        return AssistantPolicy(stochastic=True), "辅助器全套 AI (最新)"
+    if kind.startswith("zoo:"):
+        from assistant.zoo import load_version, parse_zoo_spec
+
+        parsed = parse_zoo_spec(kind)
+        if parsed is None:
+            raise ValueError(f"未知的策略版本库 AI:{kind}")
+        ver, stoch = parsed
+        mode = "随机版" if stoch else "确定版"
+        return load_version(ver, stochastic=stoch, exact_swap_live=True), f"版本库 {ver} ({mode})"
     if kind == "s4":
         from policies.learned_policy import LearnedPolicy
 

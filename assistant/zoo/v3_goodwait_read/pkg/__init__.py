@@ -1,0 +1,1 @@
+"""Frozen assistant runtime snapshot."""
