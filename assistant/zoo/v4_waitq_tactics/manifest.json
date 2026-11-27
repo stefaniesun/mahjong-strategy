@@ -4,5 +4,15 @@
   "git_subject": "feat(assistant): v4 upgrade - wait quality (opp void/terminal/swap-floor), value-scaled defense, midgame concealed kong capture, tighter no-regress pong",
   "created_at": "2026-11-27 14:34:09",
   "note": "听对手缺门/边幺/已知换牌必打听口加成 + 按自身番数动态缩放防守 + 中盘1->2暗杠追回 + 收紧不降向听缩手碰牌与碰后攻防弃牌",
-  "benchmark": {}
+  "benchmark": {
+    "games": 10000,
+    "file": "outputs/arena_v3_vs_v4.json",
+    "det_mean_score": 0.0559,
+    "det_ci95": 0.089,
+    "rand_mean_score": 0.0297,
+    "rand_ci95": 0.0875,
+    "vs_v3_pooled_diff": 0.011,
+    "vs_v2_pooled_diff": 0.1444,
+    "vs_s3_plus_pooled_diff": 0.1798
+  }
 }
