@@ -9,7 +9,6 @@ from engine.ting_check import ting_tiles
 
 from assistant.counting import TileCounts
 from assistant.danger import random_pool
-from assistant.discard_v2 import score_discard_candidates_v2
 from assistant.opponent_read import OpponentRead
 from assistant.report import Finding, certain, counted, probable
 from assistant.state import AssistantState
@@ -334,6 +333,8 @@ def analyze_own_hand(
             key=lambda c: (c["shanten_after"], -(c["max_fan"] if c["max_fan"] is not None else -1), -c["live"], c["index"]),
         )
         by_safe = sorted(candidates, key=lambda c: (c["dealin_prob"], c["shanten_after"], -c["live"], c["index"]))
+        from assistant.discard_v2 import score_discard_candidates_v2
+
         by_ev = score_discard_candidates_v2(state, hand, counts, by_speed, danger_rows=danger_rows, opp_reads=opp_reads)
         ev_by_idx = {c["index"]: c for c in by_ev}
         for c in by_speed:

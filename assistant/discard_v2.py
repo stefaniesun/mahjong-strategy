@@ -20,6 +20,7 @@ from engine.tiles import SUITS, Suit
 
 from assistant.counting import TileCounts
 from assistant.opponent_read import OpponentRead
+from assistant.own_hand import fast_shanten_hand, fast_useful_indices
 from assistant.state import AssistantState
 from assistant.tiles import from_label, rank_of, suit_of, tidx
 
@@ -28,10 +29,13 @@ from assistant.tiles import from_label, rank_of, suit_of, tidx
 class DiscardV2Config:
     w_shanten: float = 2.60        # 每少 1 步向听的进攻基础价值
     w_live_log: float = 0.72       # 未听牌期有效进张对数收益 (自然递减)
+    w_good_wait_1sh: float = 0.28  # 1向听摸入有效张后听牌宽度的对数期望(偏爱两面好型、避边嵌死口)
+    w_pong_speedup: float = 0.14   # 四川血战可碰对子三家提速进张红利
     w_tenpai_ev: float = 0.85      # 听牌期 log1p(加权胡牌分期望) 收益
     w_dead_wait_pen: float = 1.65  # 中盘死听惩罚(残局可被保叫红利抵消)
     w_flush_pot: float = 0.55      # 10+ 张清一色路线留同花色红利
     w_seven_pairs: float = 0.45    # <=1 向听七对路线保对子红利
+    w_toitoi_pot: float = 0.30     # >=2 副露时保对子冲对对胡红利
     w_root_keep: float = 0.18      # 保住 4 张根 / 暗刻微调
     w_shape_conn: float = 0.015    # 留牌顺滑度/中张连接微调
     w_defense: float = 0.85        # 点炮期望赔付防守权重(240局配对标定甜点:中盘进攻优先+轻避炮,残局远向听强防守)
@@ -120,6 +124,75 @@ def _seven_pairs_shanten_after(counts: list[int], void_idx: int | None) -> int:
         if c > 0:
             unique += 1
     return 6 - pairs + max(0, 7 - unique)
+
+
+def _one_shanten_good_wait_quality(
+    counts13: list[int],
+    fixed_melds: int,
+    void_idx: int | None,
+    useful: list[dict],
+    unseen: tuple[int, ...],
+) -> float:
+    """1向听两步前瞻: 按每种有效进张的剩余张数加权, 计算摸入后最佳听牌宽度的 log1p 期望。
+
+    两面好型(听 6-8 张)明显高于边嵌/单钓死口(听 2-3 张), 帮助 1 向听优先留两面好搭。
+    """
+    total_w = 0
+    acc = 0.0
+    for u_row in useful:
+        rem = u_row["remaining"]
+        if rem <= 0:
+            continue
+        u_idx = u_row["index"]
+        counts13[u_idx] += 1
+        best_wait_live = 0
+        # 寻找摸入 u_idx 后能立即听牌(sh==0)的最大胡口剩余张数
+        for d in range(27):
+            if counts13[d] <= 0 or d == u_idx:
+                continue
+            counts13[d] -= 1
+            if fast_shanten_hand(counts13, fixed_melds, void_idx) == 0:
+                ws = fast_useful_indices(counts13, fixed_melds, void_idx, 0)
+                w_live = sum(unseen[w] for w in ws)
+                if w_live > best_wait_live:
+                    best_wait_live = w_live
+            counts13[d] += 1
+        counts13[u_idx] -= 1
+        total_w += rem
+        acc += rem * math.log1p(best_wait_live)
+    return (acc / total_w) if total_w > 0 else 0.0
+
+
+def _pong_speedup_outs(
+    counts13: list[int],
+    fixed_melds: int,
+    void_idx: int | None,
+    cur_sh: int,
+    unseen: tuple[int, ...],
+) -> int:
+    """计算四川血战中“可由三家打出碰牌直接降向听”的有效对子外池张数。"""
+    outs = 0
+    for t in range(27):
+        if counts13[t] != 2 or unseen[t] <= 0:
+            continue
+        if void_idx is not None and t // 9 == void_idx:
+            continue
+        counts13[t] -= 2
+        # 检查碰后打任意一张能否让向听严格变小
+        improved = False
+        for d in range(27):
+            if counts13[d] <= 0:
+                continue
+            counts13[d] -= 1
+            if fast_shanten_hand(counts13, fixed_melds + 1, void_idx) < cur_sh:
+                improved = True
+                counts13[d] += 1
+                break
+            counts13[d] += 1
+        counts13[t] += 2
+        if improved:
+            outs += unseen[t]
+    return outs
 
 
 def score_discard_candidates_v2(
@@ -254,9 +327,11 @@ def score_discard_candidates_v2(
         else:
             offense = -config.w_shanten * sh + config.w_live_log * math.log1p(live)
 
-        # 2) 大番潜力与牌形微调
+        # 2) 大番潜力与牌形微调(含 1 向听听牌好型率与碰牌提速进张)
         base_counts[idx] -= 1
         fan_pot = 0.0
+        good_wait_term = 0.0
+        pong_term = 0.0
         if sh >= 1:
             if has_flush_pot and (idx // 9) != dom_suit and sh <= 2:
                 fan_pot += config.w_flush_pot
@@ -264,9 +339,32 @@ def score_discard_candidates_v2(
                 after_7p = _seven_pairs_shanten_after(base_counts, void_idx)
                 if after_7p <= init_7p:
                     fan_pot += config.w_seven_pairs
+            elif len(hand.melds) >= 2 and sh <= 2:
+                # >=2 副露冲对对胡路线: 尽量不拆暗对/暗刻
+                if hand.counts[idx] == 1:
+                    pairs_kept = sum(1 for i, cnt in enumerate(base_counts) if cnt >= 2 and (void_idx is None or i // 9 != void_idx))
+                    if len(hand.melds) + pairs_kept >= 4:
+                        fan_pot += config.w_toitoi_pot
             # 不轻易拆 4 张根
             if hand.counts[idx] == 4:
                 fan_pot -= config.w_root_keep
+            # 1 向听两步听牌好型率(仅对竞争 1 向听候选精算, 兼顾精度与毫秒级延迟)
+            if (
+                config.w_good_wait_1sh > 0.0
+                and best_sh == 1
+                and sh == 1
+                and live > 0
+                and live >= max(1, best_live_at_min_sh - 12)
+            ):
+                gw = _one_shanten_good_wait_quality(
+                    base_counts, len(hand.melds), void_idx, c.get("useful") or [], counts.unseen
+                )
+                good_wait_term = config.w_good_wait_1sh * gw
+            # 1~2 向听可碰对子提速进张(非七对路线)
+            if config.w_pong_speedup > 0.0 and sh in (1, 2) and not (init_7p <= 1 and len(hand.melds) == 0):
+                p_outs = _pong_speedup_outs(base_counts, len(hand.melds), void_idx, sh, counts.unseen)
+                if p_outs > 0:
+                    pong_term = config.w_pong_speedup * math.log1p(p_outs)
             shape_term = config.w_shape_conn * _shape_quality(base_counts, void_idx)
         else:
             shape_term = 0.0
@@ -275,7 +373,7 @@ def score_discard_candidates_v2(
         # 3) 防守分
         def_pen = -config.w_defense * def_mult * exp_dealin_loss
 
-        ev = offense + fan_pot + shape_term + def_pen
+        ev = offense + good_wait_term + pong_term + fan_pot + shape_term + def_pen
 
         # 生成简明理由标签
         reasons: list[str] = []
@@ -287,7 +385,9 @@ def score_discard_candidates_v2(
                 reasons.append(f"听牌{live}张(最高{mx_fan}番)")
         else:
             reasons.append(f"{sh}向听·{live}进张")
-        if fan_pot >= 0.4:
+        if good_wait_term >= 0.42:
+            reasons.append("好型听口")
+        if fan_pot >= 0.3:
             reasons.append("保留大番路线")
         if d_row and d_row.get("safe_all"):
             reasons.append("100%安全")
@@ -297,7 +397,7 @@ def score_discard_candidates_v2(
         item = dict(c)
         item.update(
             ev_score=round(ev, 4),
-            ev_offense=round(offense + shape_term, 3),
+            ev_offense=round(offense + good_wait_term + pong_term + shape_term, 3),
             ev_defense=round(def_pen, 3),
             ev_fan=round(fan_pot, 3),
             ev_exp_dealin_loss=round(exp_dealin_loss, 4),

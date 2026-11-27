@@ -18,6 +18,8 @@ class PublicRecorder:
     def __init__(self, game: Game) -> None:
         self.game = game
         self.discards: list[list[str]] = [[] for _ in range(4)]
+        self.discard_tsumogiri: list[list[bool]] = [[] for _ in range(4)]
+        self.passed_since_tedashi: list[set[str]] = [set() for _ in range(4)]
         self.wins: list[WinRecord] = []
         self.last_drawn: list[str | None] = [None] * 4
         self.draw_counts: list[int] = [0] * 4
@@ -33,18 +35,37 @@ class PublicRecorder:
         wall_top = state.wall[-1] if state.wall else None
         pending = state.pending_discard
         rob = state.pending_rob_kong
+        was_tsumogiri = (
+            action.kind is ActionKind.DISCARD
+            and action.tile is not None
+            and self.drew_since_meld[player]
+            and self.last_drawn[player] == tile_to_str(action.tile)
+        )
 
         self.game.step(player, action)
         state = self.game.state
         kind = action.kind
 
         if kind is ActionKind.DISCARD and action.tile is not None:
-            self.discards[player].append(tile_to_str(action.tile))
-            self.events.append({"type": "discard", "seat": player, "tile": tile_to_str(action.tile)})
+            t_str = tile_to_str(action.tile)
+            self.discards[player].append(t_str)
+            self.discard_tsumogiri[player].append(was_tsumogiri)
+            if not was_tsumogiri:
+                self.passed_since_tedashi[player].clear()
+            # 若此张牌打出后直接无人进入待响应(或 pending_winners 不含某在场玩家), 说明其他在场玩家当前手牌不能胡这张
+            pending_win_seats = set(state.pending_winners) if state.pending_discard is not None else set()
+            for s in range(4):
+                if s != player and not state.won[s] and s not in pending_win_seats:
+                    self.passed_since_tedashi[s].add(t_str)
+            self.events.append({"type": "discard", "seat": player, "tile": t_str, "tsumogiri": was_tsumogiri})
+        elif kind is ActionKind.PASS and pending is not None:
+            self.passed_since_tedashi[player].add(tile_to_str(pending.tile))
         elif kind is ActionKind.PONG and action.tile is not None:
             self.drew_since_meld[player] = False
+            self.passed_since_tedashi[player].clear()
             self.events.append({"type": "pong", "seat": player, "tile": tile_to_str(action.tile)})
         elif kind is ActionKind.KONG and action.tile is not None:
+            self.passed_since_tedashi[player].clear()
             if action.kong_kind is GangKind.ADDED:
                 self.added_kongs.add((player, tile_to_str(action.tile)))
             if state.gang_records and state.gang_records[-1].gang_player == player:

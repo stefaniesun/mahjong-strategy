@@ -57,6 +57,8 @@ def build_state(
                 void_suit=void.value if void is not None else None,
                 won=s.won[seat],
                 hidden_count=hidden,
+                discard_tsumogiri=tuple(recorder.discard_tsumogiri[seat]),
+                passed_since_tedashi=tuple(sorted(recorder.passed_since_tedashi[seat])),
             )
         )
 

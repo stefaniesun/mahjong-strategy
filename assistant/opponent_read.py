@@ -27,6 +27,7 @@ _TENPAI_TABLE: tuple[tuple[float, ...], ...] = (
 _BASE_WAIT_NON_GENBUTSU = 0.1355
 _BASE_WAIT_GENBUTSU_RECENT = 0.0049
 _BASE_WAIT_GENBUTSU_OLD = 0.0126
+_BASE_WAIT_PASSED_SAME_HAND = 0.0030
 
 
 @dataclass(frozen=True)
@@ -39,6 +40,7 @@ class OpponentRead:
     n_melds: int
     n_kongs: int
     non_void_discards: int
+    trailing_tsumogiri: int
     flush_suit: str | None  # "W"/"T"/"B" if flush threat detected
     flush_level: str | None  # "strong" / "watch"
     toitoi_alert: str | None
@@ -47,6 +49,7 @@ class OpponentRead:
     # 供单张点炮率快速查表的预计算结构
     disc_set: frozenset[int]
     recent3_set: frozenset[int]
+    passed_same_hand_set: frozenset[int]
     nv_disc_by_suit: dict[str, int]
     melds_by_suit: dict[str, int]
 
@@ -60,6 +63,7 @@ class OpponentRead:
             "n_melds": self.n_melds,
             "n_kongs": self.n_kongs,
             "non_void_discards": self.non_void_discards,
+            "trailing_tsumogiri": self.trailing_tsumogiri,
             "flush_suit": suit_label(self.flush_suit) if self.flush_suit else None,
             "flush_level": self.flush_level,
             "toitoi_alert": self.toitoi_alert,
@@ -103,13 +107,25 @@ def read_opponent(
     disc_idx = [tidx(t) for t in view.discards]
     disc_set = frozenset(disc_idx)
     recent3_set = frozenset(disc_idx[-3:]) if disc_idx else frozenset()
+    passed_same_hand_set = frozenset(tidx(t) for t in view.passed_since_tedashi)
 
     nv_disc_by_suit = {"W": 0, "T": 0, "B": 0}
-    for t in disc_idx:
+    nv_positions: list[int] = []
+    for pos, t in enumerate(disc_idx):
         sc = suit_of(t)
         if sc != vcode:
             nv_disc_by_suit[sc] += 1
+            nv_positions.append(pos)
     n_nv = sum(nv_disc_by_suit.values())
+
+    # 统计非缺门末尾连续摸切次数(仅在 discard_tsumogiri 与 discards 对齐时启用)
+    trailing_tsumogiri = 0
+    if len(view.discard_tsumogiri) == len(disc_idx) and nv_positions:
+        for pos in reversed(nv_positions):
+            if view.discard_tsumogiri[pos]:
+                trailing_tsumogiri += 1
+            else:
+                break
 
     melds_by_suit = {"W": 0, "T": 0, "B": 0}
     n_kongs = 0
@@ -133,10 +149,17 @@ def read_opponent(
         basis.append(f"已亮出 {n_melds} 组副露,仅剩 {view.hidden_count} 张暗牌(金钩钓单吊)")
     else:
         tenpai_p = _TENPAI_TABLE[min(n_melds, 3)][_nv_bin(n_nv)]
+        # 摸切节奏微调(120局实测: 早巡1-2张非缺门即摸切听牌率 +10%, 后巡8+张摸切听牌率 +6%)
+        if trailing_tsumogiri >= 1:
+            if 1 <= n_nv <= 2:
+                tenpai_p = min(0.95, tenpai_p + 0.07)
+            elif n_nv >= 8:
+                tenpai_p = min(0.96, tenpai_p + 0.05)
         # 残局轻微上调(牌墙越浅未胡者听牌比例越高)
         if state.wall_count <= 20 and n_nv >= 2:
             tenpai_p = min(0.95, tenpai_p + 0.06)
-        basis.append(f"副露 {n_melds} 组,非缺门已弃 {n_nv} 张(牌墙余 {state.wall_count} 张)")
+        tsumo_txt = f", 近期连续摸切 {trailing_tsumogiri} 巡" if trailing_tsumogiri >= 2 else ""
+        basis.append(f"副露 {n_melds} 组,非缺门已弃 {n_nv} 张{tsumo_txt}(牌墙余 {state.wall_count} 张)")
 
     # 大牌型预警: 1) 清一色
     flush_suit: str | None = None
@@ -188,6 +211,7 @@ def read_opponent(
         n_melds=n_melds,
         n_kongs=n_kongs,
         non_void_discards=n_nv,
+        trailing_tsumogiri=trailing_tsumogiri,
         flush_suit=flush_suit,
         flush_level=flush_level,
         toitoi_alert=toitoi_alert,
@@ -195,6 +219,7 @@ def read_opponent(
         basis=tuple(basis),
         disc_set=disc_set,
         recent3_set=recent3_set,
+        passed_same_hand_set=passed_same_hand_set,
         nv_disc_by_suit=nv_disc_by_suit,
         melds_by_suit=melds_by_suit,
     )
@@ -219,8 +244,11 @@ def estimate_dealin_prob(
         return 0.0, ["对方尚未听牌"]
 
     tags: list[str] = []
-    # 1) 现物判断(最强避炮信号)
-    if tile_idx in opp_read.recent3_set:
+    # 1) 同手未变过牌(120局实测 737/737 零点炮, 最强安全信号)与现物判断
+    if tile_idx in opp_read.passed_same_hand_set:
+        wait_p = _BASE_WAIT_PASSED_SAME_HAND
+        tags.append("手牌未变且刚放过此张(极安全)")
+    elif tile_idx in opp_read.recent3_set:
         wait_p = _BASE_WAIT_GENBUTSU_RECENT
         tags.append("近3巡现物(极安全)")
     elif tile_idx in opp_read.disc_set:

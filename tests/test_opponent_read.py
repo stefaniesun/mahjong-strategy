@@ -115,3 +115,58 @@ def test_defense_conflict_surfaced_when_fastest_discard_is_high_risk():
     assert rep.own_info["mode"] == "discard"
     by_tile = {c["tile"]: c for c in rep.own_info["candidates"]}
     assert by_tile["5条"]["dealin_prob"] > by_tile["5筒"]["dealin_prob"]
+
+
+def test_passed_since_tedashi_and_tsumogiri_signal():
+    from dataclasses import replace
+
+    # 1) 静态验证: 对手手牌未变且刚放过 5条 -> 5条点炮概率极低(<0.5%)并打上标签, 远低于未放过的 6条
+    own = "1T 2T 3T 5T 6T 7T 8T 9T 2B 3B 4B 5B 6B 7B".split()
+    st = make_state(
+        own,
+        voids={0: "W", 1: "W", 2: "T", 3: "B"},
+        melds={1: [pong("2T"), pong("8T")]},
+        rivers={1: ["1W", "9W", "1B", "3B", "4B"]},
+        hidden={1: 7, 2: 13, 3: 13},
+    )
+    p1 = replace(
+        st.players[1],
+        discard_tsumogiri=(False, False, False, True, True),
+        passed_since_tedashi=("5T",),
+    )
+    st = replace(st, players=(st.players[0], p1, st.players[2], st.players[3]))
+    rep = analyze(st)
+    assert not rep.errors
+    by_tile = {row["tile"]: row for row in rep.danger_rows}
+    e_5t = next(e for e in by_tile["5条"]["per_opponent"] if e["seat"] == 1)
+    e_6t = next(e for e in by_tile["6条"]["per_opponent"] if e["seat"] == 1)
+    assert e_5t["dealin_prob"] < 0.005
+    assert e_6t["dealin_prob"] > e_5t["dealin_prob"] * 10
+    assert any("手牌未变" in tag for tag in e_5t["risk_tags"])
+
+    # 2) 动态验证: PublicRecorder + build_state 正确同步 discard_tsumogiri 与 passed_since_tedashi
+    from assistant.adapters.from_engine import build_state
+    from assistant.bot import AssistantPolicy
+    from assistant.recorder import PublicRecorder
+    from engine.game import Game
+    from play.session import next_actor
+
+    game = Game(seed=77)
+    game.reset()
+    rec = PublicRecorder(game)
+    pol = AssistantPolicy(stochastic=False, exact_swap_live=False)
+    for _ in range(40):
+        if game.state.finished:
+            break
+        cur = next_actor(game)
+        if cur is None:
+            break
+        legal = game.legal_actions(cur)
+        act = pol.choose_from_game(game.state, rec, cur, legal)
+        rec.step(cur, act)
+    for s in range(4):
+        assert len(rec.discard_tsumogiri[s]) == len(rec.discards[s])
+    ast = build_state(game.state, rec, perspective=0)
+    for s in range(4):
+        assert len(ast.players[s].discard_tsumogiri) == len(ast.players[s].discards)
+        assert isinstance(ast.players[s].passed_since_tedashi, tuple)

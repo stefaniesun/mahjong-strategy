@@ -81,3 +81,29 @@ def test_discard_v2_sampling_locks_clear_choice_and_explores_close_ties():
     rng = random.Random(42)
     picks = {sample_discard_v2_index(rep_t.own_info["discard_v2_options"], rng=rng) for _ in range(30)}
     assert len(picks) >= 2
+
+
+def test_discard_v2_1shanten_good_wait_and_pong_speedup():
+    from assistant.discard_v2 import _one_shanten_good_wait_quality, _pong_speedup_outs
+    from assistant.own_hand import fast_shanten_hand, fast_useful_indices
+    from engine.hand import Hand
+    from engine.tiles import parse_tile
+
+    # 1) 1向听两步好型率: 含两面 45T+45B 的听牌宽度期望显著高于含边嵌 12T+13B 的同向听手牌
+    h_good = Hand.from_tiles([parse_tile(t) for t in "7T 8T 9T 7B 8B 9B 2B 2B 4T 5T 4B 5B 1T".split()])
+    h_bad = Hand.from_tiles([parse_tile(t) for t in "7T 8T 9T 7B 8B 9B 2B 2B 1T 2T 1B 3B 5T".split()])
+    unseen_full = tuple(4 - c for c in h_good.counts)
+    u_good = [{"index": i, "remaining": unseen_full[i]} for i in fast_useful_indices(h_good.counts, 0, 0, 1)]
+    unseen_bad = tuple(4 - c for c in h_bad.counts)
+    u_bad = [{"index": i, "remaining": unseen_bad[i]} for i in fast_useful_indices(h_bad.counts, 0, 0, 1)]
+    assert fast_shanten_hand(h_good.counts, 0, 0) == 1
+    assert fast_shanten_hand(h_bad.counts, 0, 0) == 1
+    q_good = _one_shanten_good_wait_quality(list(h_good.counts), 0, 0, u_good, unseen_full)
+    q_bad = _one_shanten_good_wait_quality(list(h_bad.counts), 0, 0, u_bad, unseen_bad)
+    assert q_good > q_bad + 0.3
+
+    # 2) 三家碰牌提速进张: 两对子(2B2B + 5B5B)1向听手牌, 碰任意一对均可立刻听牌 -> pong_speedup_outs == 4
+    h_pair = Hand.from_tiles([parse_tile(t) for t in "7T 8T 9T 7B 8B 9B 2B 2B 5B 5B 4T 5T 1T".split()])
+    unseen_p = tuple(4 - c for c in h_pair.counts)
+    outs = _pong_speedup_outs(list(h_pair.counts), 0, 0, 1, unseen_p)
+    assert outs == 4

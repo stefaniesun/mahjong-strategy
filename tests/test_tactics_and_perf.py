@@ -91,3 +91,37 @@ def test_endgame_chajiao_advisor_distinguishes_ready_push_and_fold():
     chajiao_f = next(f for f in rep_far.sections["alerts"] if "残局查叫研判" in f.title)
     assert "防守止损" in chajiao_f.title
     assert "退回" in "\n".join(chajiao_f.basis)
+
+
+def test_kong_advisor_reclaims_midgame_kong_and_warns_late_far():
+    from assistant.tactics import advise_kong
+    from engine.tiles import parse_tile
+
+    own = "1T 1T 1T 1T 3T 4T 5T 2B 3B 4B 6B 8B 9B 5B".split()
+    rem = [tile_to_str(t) for t in full_wall()]
+    for t in own:
+        rem.remove(t)
+    # 牌墙剩 15 张 (sh=1): 不应再保守判"慎杠", 应果断"建议暗杠"
+    rv15 = rem[: len(rem) - 54]  # 15 墙 + 39 暗牌
+    st15 = make_state(
+        own,
+        voids={0: "W", 1: "W", 2: "T", 3: "B"},
+        rivers={1: rv15[:18], 2: rv15[18:36], 3: rv15[36:]},
+        hidden={1: 13, 2: 13, 3: 13},
+    )
+    assert st15.wall_count == 15
+    h = Hand.from_tiles([parse_tile(t) for t in own])
+    res_mid = advise_kong(st15, h, parse_tile("1T"), "concealed", sh_before=1, sh_after=1, opp_reads={})
+    assert res_mid["verdict"] == "建议暗杠"
+
+    # 牌墙剩 10 张且仍 2 向听: 才提示"慎杠"防查叫退税
+    rv10 = rem[: len(rem) - 49]
+    st10 = make_state(
+        own,
+        voids={0: "W", 1: "W", 2: "T", 3: "B"},
+        rivers={1: rv10[:17], 2: rv10[17:34], 3: rv10[34:]},
+        hidden={1: 13, 2: 13, 3: 13},
+    )
+    assert st10.wall_count == 10
+    res_late = advise_kong(st10, h, parse_tile("1T"), "concealed", sh_before=2, sh_after=2, opp_reads={})
+    assert res_late["verdict"] == "慎杠"

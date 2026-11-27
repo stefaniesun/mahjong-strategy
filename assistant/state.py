@@ -48,6 +48,8 @@ class PlayerView:
     void_suit: str | None = None  # "W"/"T"/"B";未知时为 None
     won: bool = False
     hidden_count: int = 0  # 视角玩家看不到的暗手牌张数;已胡者不含胡牌张;视角玩家自己为 0
+    discard_tsumogiri: tuple[bool, ...] = ()  # 与 discards 对齐: True=摸切, False=手切(未知时可为空)
+    passed_since_tedashi: tuple[str, ...] = ()  # 对手自上次手切/副露(手牌变化)以来放过未胡的牌
 
 
 @dataclass(frozen=True)

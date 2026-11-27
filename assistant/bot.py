@@ -172,7 +172,7 @@ class AssistantPolicy(BasePolicy):
 
             if pong_act is not None:
                 pa = advise_pong(state, hand, tile, discarder, eff_unseen, risk_by_idx)
-                if pa["verdict"] in ("强烈建议碰", "建议碰", "可碰"):
+                if pa["verdict"] in ("强烈建议碰", "建议碰", "可碰", "权衡"):
                     return pong_act
             return pass_act
 
@@ -201,15 +201,18 @@ class AssistantPolicy(BasePolicy):
                 if adv["verdict"] in ("建议暗杠", "建议补杠"):
                     return ka_act
 
-        # 4c) 出牌 (discard_v2 + 受控随机性)
+        # 4c) 出牌 (discard_v2 + 紧致受控随机性: 每局12-15次弃牌, 仅在极接近 <=0.10 EV 时探索次优, 避免随机叠加掉分)
         own_info, _ = analyze_own_hand(
             state, counts, winners=winners, floors=floors, danger_rows=danger_rows, opp_reads=opp_reads
         )
-        ranked = score_discard_candidates_v2(
-            state, hand, counts, own_info["candidates"], danger_rows, opp_reads, config=self.discard_config
-        )
+        if self.discard_config == DEFAULT_DISCARD_V2_CONFIG and own_info.get("discard_v2_options"):
+            ranked = own_info["discard_v2_options"]
+        else:
+            ranked = score_discard_candidates_v2(
+                state, hand, counts, own_info["candidates"], danger_rows, opp_reads, config=self.discard_config
+            )
         if self.stochastic:
-            chosen_idx = sample_discard_v2_index(ranked, rng=self.rng, top_k=3, max_gap=0.22, temperature=0.07)
+            chosen_idx = sample_discard_v2_index(ranked, rng=self.rng, top_k=2, max_gap=0.10, temperature=0.03)
         else:
             chosen_idx = ranked[0]["index"]
 

@@ -115,12 +115,12 @@ def _suit_pair_configs(caps: tuple[int, ...], n_pairs: int) -> tuple[tuple[int, 
     return tuple(sorted(results))
 
 
-@lru_cache(maxsize=131072)
+@lru_cache(maxsize=16384)
 def _suit_standard_array(caps: tuple[int, ...], n_melds: int, with_pair: bool) -> np.ndarray:
     return np.asarray(_suit_standard_configs(caps, n_melds, with_pair), dtype=np.int64).reshape(-1, 9)
 
 
-@lru_cache(maxsize=131072)
+@lru_cache(maxsize=16384)
 def _suit_pair_array(caps: tuple[int, ...], n_pairs: int) -> np.ndarray:
     return np.asarray(_suit_pair_configs(caps, n_pairs), dtype=np.int64).reshape(-1, 9)
 
@@ -143,7 +143,7 @@ def _cartesian(allowed: list[int], arrays: list[np.ndarray]) -> np.ndarray:
     return out
 
 
-@lru_cache(maxsize=4096)
+@lru_cache(maxsize=256)
 def _enumerate_hidden_hands_cached(
     win_index: int,
     fixed_melds: int,
