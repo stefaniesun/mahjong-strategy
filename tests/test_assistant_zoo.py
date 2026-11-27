@@ -20,31 +20,36 @@ def test_zoo_lists_and_isolates_v2_and_v3_snapshots():
     assert "v2_ev_base" in versions
     assert "v3_goodwait_read" in versions
     assert "v4_waitq_tactics" in versions
+    assert "v5_unified_ev" in versions
 
     m2 = get_manifest("v2_ev_base")
     m3 = get_manifest("v3_goodwait_read")
     m4 = get_manifest("v4_waitq_tactics")
+    m5 = get_manifest("v5_unified_ev")
     assert m2["git_commit"] == "8cb0cfc"
     assert m3["git_commit"] == "3f0bcd9"
     assert m4["git_commit"] == "66e601a"
+    assert m5["git_commit"] == "0eaef06"
 
     p2 = load_version("v2_ev_base", stochastic=False)
     p3 = load_version("v3_goodwait_read", stochastic=False)
     p4 = load_version("v4_waitq_tactics", stochastic=False)
+    p5 = load_version("v5_unified_ev", stochastic=False)
     # 必须是各自独立冻结的模块类, 互不污染
-    assert len({type(p2), type(p3), type(p4)}) == 3
+    assert len({type(p2), type(p3), type(p4), type(p5)}) == 4
     assert type(p2).__module__ == "assistant.zoo.v2_ev_base.pkg.bot"
     assert type(p3).__module__ == "assistant.zoo.v3_goodwait_read.pkg.bot"
     assert type(p4).__module__ == "assistant.zoo.v4_waitq_tactics.pkg.bot"
+    assert type(p5).__module__ == "assistant.zoo.v5_unified_ev.pkg.bot"
 
 
 def test_zoo_cross_version_table_plays_legal_complete_games():
-    pool = build_opponent_pool(["v2_ev_base", "v3_goodwait_read", "v4_waitq_tactics"], seed=7)
+    pool = build_opponent_pool(["v3_goodwait_read", "v4_waitq_tactics", "v5_unified_ev"], seed=7)
     lineup = [
-        pool["v2_ev_base_det"],
-        pool["v3_goodwait_read_rand"],
+        pool["v3_goodwait_read_det"],
         pool["v4_waitq_tactics_det"],
-        pool["v4_waitq_tactics_rand"],
+        pool["v5_unified_ev_det"],
+        pool["v5_unified_ev_rand"],
     ]
     for seed in (301, 302):
         game = Game(seed=seed, dealer=seed % 4)

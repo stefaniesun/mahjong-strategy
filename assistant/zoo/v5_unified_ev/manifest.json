@@ -1,0 +1,8 @@
+{
+  "version": "v5_unified_ev",
+  "git_commit": "0eaef06",
+  "git_subject": "feat(assistant): v5 structural upgrade - unified discard_v2 EV pong-vs-pass, 1-shanten fan-aware EV, Kabe wall-of-4 & early-mid read",
+  "created_at": "2026-11-27 15:39:41",
+  "note": "碰/不碰统一接入 discard_v2 同口径 EV + 1向听真实番数与听口双期望 + Kabe 绝张壁断搭与早巡切中张读牌(点炮ECE降至0.0013)",
+  "benchmark": {}
+}
