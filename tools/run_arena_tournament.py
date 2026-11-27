@@ -158,6 +158,28 @@ def _play_one_game(seed: int, dealer: int, lineup: list[str], rand_seed: int) ->
     }
 
 
+_CACHE_MODULES = ("assistant.winner_inference", "assistant.swap_v2", "assistant.swap_v1")
+
+
+def _release_caches() -> None:
+    """清空策略模块内的 lru_cache。
+
+    这些缓存以 numpy 数组为值, 多进程长跑时单个 worker 可累积到 GB 级内存,
+    导致 "Unable to allocate ... MiB" 的 OOM。缓存只是加速, 清空不改变任何决策结果。
+    """
+    for name in _CACHE_MODULES:
+        mod = sys.modules.get(name)
+        if mod is None:
+            continue
+        for value in list(vars(mod).values()):
+            clear = getattr(value, "cache_clear", None)
+            if callable(clear):
+                try:
+                    clear()
+                except Exception:
+                    pass
+
+
 def _worker_run_deal_batch(args):
     deal_specs, rotate = args
     games_out = []
@@ -170,6 +192,7 @@ def _worker_run_deal_batch(args):
             res["deal_idx"] = deal_idx
             res["rot"] = rot
             games_out.append(res)
+        _release_caches()
     return games_out
 
 
