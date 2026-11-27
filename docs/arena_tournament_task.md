@@ -19,12 +19,14 @@
 python tools/run_arena_tournament.py --deals 4 --workers 2 --out outputs/arena_smoke.json
 ```
 
-### 2. 主力大样本正式锦标赛（推荐：1,000 副牌 × 4 座轮转 = 4,000 场对局，16,000 人次）
+### 2. 主力大样本正式锦标赛（推荐：2,500 副牌 × 4 座轮转 = 10,000 场对局，40,000 人次）
 含 `s4_v5` 神经网络同台混战（支持随时 Ctrl+C 中断、`--resume` 断点续跑）：
 ```powershell
-python tools/run_arena_tournament.py --deals 1000 --workers 15 --resume --out outputs/arena_tournament_large.json
+python tools/run_arena_tournament.py --deals 2500 --workers 15 --resume --out outputs/arena_tournament_large.json
 ```
-*(实测 2 核 16 场含 S4 仅需 24 秒；15 核跑满 4,000 场预计约 10~15 分钟；若想先快跑 2,000 场把 `--deals 1000` 改为 `--deals 500` 即可，约 5~8 分钟。若高算力机上也有 `s5-step-900.pt`，可追加 `--s5-checkpoint <你的路径>`)*
+- **精度与耗时**：总榜 95% 置信误差约 **±0.05 分/局**、两两同桌约 **±0.09 分/局**；15 核下预计约 **25~35 分钟**（结果文件约 6 MB）。
+- **超高精度档（可选，16,000 场 / 64,000 人次，误差压到 ±0.04 分）**：可先跑完 `2500`，或直接将 `--deals 2500` 改为 `--deals 4000` 续跑（约 40~55 分钟）。
+- 若高算力机上也有 `s5-step-900.pt`，可追加 `--s5-checkpoint <你的路径>` 一并拉入同台 PK。
 
 ### 3. 极速纯规则+辅助器大样本（可选，跳过 PyTorch，速度约快 4 倍）
 ```powershell
@@ -36,7 +38,7 @@ python tools/run_arena_tournament.py --deals 1000 --no-s4 --workers 15 --resume 
 ## 跑完后提交回仓库
 ```powershell
 git add outputs/arena_tournament_large.json
-git commit -m "data: add 2000-game multi-policy random arena tournament results"
+git commit -m "data: add 10000-game multi-policy random arena tournament results"
 git push origin main
 ```
 推上来之后告诉我，我拉取下来帮你做完整的分层战绩分析、牌力评分和弱点拆解！

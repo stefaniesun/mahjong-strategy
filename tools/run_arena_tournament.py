@@ -319,7 +319,7 @@ def build_deal_schedule(deals: int, seed_start: int, policies: list[str]) -> lis
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="多策略随机匹配锦标赛大样本评测")
-    parser.add_argument("--deals", type=int, default=500, help="独立牌副数(默认开启4座轮转 -> 总局数 = deals * 4)")
+    parser.add_argument("--deals", type=int, default=2500, help="独立牌副数(默认开启4座轮转 -> 总局数 = deals * 4)")
     parser.add_argument("--no-rotate", action="store_true", help="关闭4座同牌轮转(仅打1次)")
     parser.add_argument("--seed-start", type=int, default=120_000)
     parser.add_argument("--workers", type=int, default=max(1, (mp.cpu_count() or 4) - 1))
