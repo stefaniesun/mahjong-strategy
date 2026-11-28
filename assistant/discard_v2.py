@@ -157,6 +157,9 @@ def _flush_potential_bonus(
     # 基础清一色红利 + 超过10张后的递增红利(11/12/13张越来越接近清一色听牌)
     wall_scale = min(1.0, max(0.0, (state.wall_count - 16) / 24.0))
     bonus = config.w_flush_pot + wall_scale * 0.42 * (n_dom - 10)
+    # 12~13张(仅剩0~1张异花色)且1向听时已几乎纯一色成型, 额外给予高确定性清一色冲刺加成
+    if n_dom >= 12 and sh == 1 and wall_scale > 0.0:
+        bonus += wall_scale * 0.65 * (n_dom - 11)
     # 早中盘多对子可连碰(清一色+对对胡 3番路线)与对手缺该门(稳稳喂碰/喂胡)加成
     if wall_scale > 0.0:
         base = dom_suit * 9
@@ -308,7 +311,8 @@ def _tenpai_upgrade_bonus(
                 kong_outs += 1.5 * unseen[m_idx]
 
     # 2) 换听改良张数: 仅检查与现有手牌相邻(距离 <= 2)的非缺门未现张, 避免无意义全枚举
-    upgrade_outs = 0
+    # 用平滑增益权重(+2张以上记满权 1.0, +1张改良如 3344筒摸5筒变3/6筒两面记 0.55), 避免窄口因门槛断崖反超宽口!
+    upgrade_outs = 0.0
     if config.w_tenpai_upgrade > 0.0:
         present = [i for i in range(27) if counts13[i] > 0]
         cand_u: set[int] = set()
@@ -325,22 +329,25 @@ def _tenpai_upgrade_bonus(
             if void_idx is not None and u // 9 == void_idx:
                 continue
             counts13[u] += 1
-            improved = False
+            best_gain = 0
             for d in present:
                 if d == u:
                     continue
                 counts13[d] -= 1
                 if fast_shanten_hand(counts13, fixed_melds, void_idx) == 0:
                     ws = fast_useful_indices(counts13, fixed_melds, void_idx, 0)
-                    new_live = sum(unseen[w] for w in ws)
-                    if new_live >= cur_wait_live + 2:
-                        improved = True
-                        counts13[d] += 1
-                        break
+                    gain = sum(unseen[w] for w in ws) - cur_wait_live
+                    if gain > best_gain:
+                        best_gain = gain
+                        if best_gain >= 2:
+                            counts13[d] += 1
+                            break
                 counts13[d] += 1
             counts13[u] -= 1
-            if improved:
+            if best_gain >= 2:
                 upgrade_outs += unseen[u]
+            elif best_gain == 1:
+                upgrade_outs += 0.55 * unseen[u]
 
     return wall_scale * (config.w_tenpai_upgrade * math.log1p(upgrade_outs) + config.w_tenpai_kong * kong_outs)
 
@@ -583,6 +590,17 @@ def score_discard_candidates_v2(
         elif sh >= 1:
             if has_flush_pot and (idx // 9) != dom_suit and sh <= 2:
                 fan_pot += _flush_potential_bonus(base_counts, hand.melds, void_idx, sh, state, config)
+                # 当唯一听牌选择只是 0 番窄口(<=3张)而本手已有 12+ 张主花色 1 向听冲纯清一色时, 不应被 1 分小平胡锁死
+                if (
+                    best_sh == 0
+                    and best_tenpai_fan == 0
+                    and best_live_at_min_sh <= 3
+                    and sh == 1
+                    and suit_totals[dom_suit] >= 12
+                    and state.wall_count >= 22
+                ):
+                    wall_sc_fl = min(1.0, max(0.0, (state.wall_count - 16) / 24.0))
+                    fan_pot += 0.90 * wall_sc_fl
             if init_7p <= 1 and len(hand.melds) == 0:
                 after_7p = _seven_pairs_shanten_after(base_counts, void_idx)
                 if after_7p <= init_7p:
@@ -598,13 +616,15 @@ def score_discard_candidates_v2(
             # 不轻易拆 4 张根
             if hand.counts[idx] == 4:
                 fan_pot -= config.w_root_keep
-            # 1 向听两步听牌好型+番数期望(仅对竞争 1 向听候选精算, 兼顾精度与毫秒级延迟)
+            # 1 向听两步听牌好型+番数期望(竞争 1 向听候选, 以及 10+ 张清一色 1 向听与 0 向听竞争时均精算)
             if (
                 config.w_good_wait_1sh > 0.0
-                and best_sh == 1
                 and sh == 1
                 and live > 0
-                and live >= max(1, best_live_at_min_sh - 12)
+                and (
+                    (best_sh == 1 and live >= max(1, best_live_at_min_sh - 12))
+                    or (best_sh == 0 and has_flush_pot and (idx // 9) != dom_suit)
+                )
             ):
                 gw = _one_shanten_good_wait_quality(
                     base_counts,

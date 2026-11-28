@@ -155,3 +155,83 @@ def test_discard_v2_void_clear_order_prefers_unseen_mid_and_pair_over_edge_and_s
     st3 = make_state(own3, voids={0: "B", 1: "T", 2: "B", 3: "T"})
     rep3 = analyze(st3)
     assert rep3.own_info["discard_v2_pick"] == "5筒"
+
+
+def test_discard_v2_prefers_safe_4out_pair_wait_with_5B_upgrade_over_3out_kanchan():
+    # 实盘截图复现: [888B] + 345678W + 1B 3B 3B 4B 4B (余38张, 缺条, 对家缺筒)
+    # 打1筒(极安全0.6%, 听3/4筒4张, 摸5筒打4筒变3345筒听3/6筒5~6张两面) 应严格优于 打3筒(嵌张2筒3张, 6.9%风险),
+    # 即使6筒已现1张(摸5筒4->5仅+1张改良)也不能因+2门槛断崖被嵌张反超!
+    from assistant.state import AssistantState, MeldView, PlayerView, WinRecord
+
+    for s2_river in (("1B", "5B", "7B", "6B", "9W"), ("1B", "5B", "7B", "8T", "9W")):
+        players = (
+            PlayerView(0, (MeldView("pong", "8B"),), ("7T", "7T", "3W", "7B"), ("7T", "7T", "3W", "7B"), "T", False, 0),
+            PlayerView(1, (), ("4T", "6T", "5W", "7W"), ("4T", "6T", "5W", "7W"), "B", True, 13),
+            PlayerView(2, (MeldView("pong", "1W"), MeldView("pong", "9T")), s2_river, s2_river, "B", False, 7),
+            PlayerView(3, (), ("1B", "5T", "7B", "2B"), ("1B", "5T", "7B", "2B"), "T", False, 13),
+        )
+        st = AssistantState(
+            perspective=0,
+            phase="play",
+            own_hand=("3W", "4W", "5W", "6W", "7W", "8W", "1B", "3B", "3B", "4B", "4B"),
+            players=players,
+            wall_count=38,
+            wins=(WinRecord(1, "6T", False, 2),),
+        )
+        rep = analyze(st)
+        assert not rep.errors
+        assert rep.own_info["discard_v2_pick"] == "1筒"
+
+
+def test_discard_v2_wall_expected_live_and_p_next_reflect_two_opp_void_suit():
+    # 实盘截图复现: 自己缺条(T), 9张筒子(123 345 6 89B) + 5张万子(1W 34W 79W), 余30张, 对家与上家均缺筒(B)
+    # 牌墙40%为筒子(未现筒子在墙占比71% vs 万子34%), 打1万的真实墙内进张、下摸率与进攻分均显著高于打9筒!
+    from assistant.state import AssistantState, MeldView, PlayerView, WinRecord
+
+    players = (
+        PlayerView(0, (), ("6T", "3T", "9T", "9T", "8T", "8T"), ("6T", "3T", "9T", "9T", "8T", "8T"), "T", False, 0),
+        PlayerView(1, (), ("1B", "1T", "7T", "1W", "4T"), ("1B", "1T", "7T", "1W", "4T"), "T", True, 13),
+        PlayerView(2, (), ("8B", "7B", "8B", "1B", "7B", "4T", "7T"), ("8B", "7B", "8B", "1B", "7B", "4T", "5T", "7T"), "B", False, 13),
+        PlayerView(3, (MeldView("pong", "5T"),), ("2B", "8T", "1B", "6B", "7T", "5B", "4T"), ("2B", "8T", "1B", "6B", "7T", "5B", "4T"), "B", False, 10),
+    )
+    st = AssistantState(
+        perspective=0,
+        phase="play",
+        own_hand=("1W", "3W", "4W", "7W", "9W", "1B", "2B", "3B", "3B", "4B", "5B", "6B", "8B", "9B"),
+        players=players,
+        wall_count=30,
+        wins=(WinRecord(1, "7B", False, 2),),
+    )
+    rep = analyze(st)
+    assert not rep.errors
+    ev_opts = {c["tile"]: c for c in rep.own_info["discard_v2_options"]}
+    # 打1万的真实牌墙进张与下摸率严格高于打9筒(两家缺筒导致筒子墙内密度约为万子2.1倍)
+    assert ev_opts["1万"]["wall_expected_live"] > ev_opts["9筒"]["wall_expected_live"] + 1.0
+    assert ev_opts["1万"]["p_next"] > ev_opts["9筒"]["p_next"] + 0.04
+    assert ev_opts["1万"]["ev_offense"] > ev_opts["9筒"]["ev_offense"]
+
+
+def test_discard_v2_breaks_weak_0fan_2out_tenpai_for_12_tile_pure_flush():
+    # 实盘截图复现: [碰5T] + 11W + 2T 444T 77899T (12张条子清一色胚 + 11W, 余30张, 上家缺条)
+    # 打1万(1向听冲12张清一色条, 250副模拟均分+3.98) 应严格优于 打2条(0番仅2张8条平胡, 均分+3.47)!
+    from assistant.state import AssistantState, MeldView, PlayerView, WinRecord
+
+    players = (
+        PlayerView(0, (MeldView("pong", "5T"),), ("8B", "9B", "2B", "7W", "9W", "2W"), ("8B", "9B", "2B", "7W", "9W", "2W"), "B", False, 0),
+        PlayerView(1, (MeldView("pong", "6B"), MeldView("pong", "4W")), ("3T", "3T", "9B", "5W"), ("3T", "3T", "9B", "5W"), "T", True, 7),
+        PlayerView(2, (MeldView("pong", "6T"), MeldView("pong", "5B")), ("1T", "8T", "8W", "1T", "5W", "3T", "5W"), ("1T", "8T", "8W", "1T", "5W", "3T", "5W"), "W", False, 7),
+        PlayerView(3, (MeldView("pong", "9W"),), ("1T", "3T", "9B", "9T", "2T", "8B", "7T"), ("1T", "3T", "9B", "9T", "2T", "8B", "7T"), "T", False, 10),
+    )
+    st = AssistantState(
+        perspective=0,
+        phase="play",
+        own_hand=("1W", "1W", "2T", "4T", "4T", "4T", "7T", "7T", "8T", "9T", "9T"),
+        players=players,
+        wall_count=30,
+        wins=(WinRecord(1, "1B", True, None),),
+    )
+    rep = analyze(st)
+    assert not rep.errors
+    assert rep.own_info["discard_v2_pick"] == "1万"
+    ev_opts = {c["tile"]: c for c in rep.own_info["discard_v2_options"]}
+    assert ev_opts["1万"]["ev_score"] > ev_opts["2条"]["ev_score"]

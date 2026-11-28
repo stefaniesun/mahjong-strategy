@@ -9,9 +9,9 @@ from engine.win_check import can_win
 from assistant.counting import TileCounts
 from assistant.opponent_read import OpponentRead
 from assistant.own_hand import build_own_hand, copy_hand, fast_shanten_hand, own_void
-from assistant.report import Finding, certain, counted
+from assistant.report import Finding, certain, counted, probable
 from assistant.state import AssistantState
-from assistant.tactics import advise_kong, advise_pong, analyze_endgame_chajiao
+from assistant.tactics import advise_kong, advise_pong, advise_win_or_pass, analyze_endgame_chajiao
 from assistant.tiles import from_label, label, seat_name, suit_label, tidx
 from assistant.winner_inference import WinnerInference
 
@@ -141,6 +141,17 @@ def build_alerts(
                             [f"番型:{'、'.join(result.patterns)}"],
                         )
                     )
+                    win_adv = advise_win_or_pass(state, hand, tile, result.fan, result.score_per_payer, reads)
+                    if win_adv["verdict"] != "建议直接胡":
+                        findings.append(
+                            probable(
+                                "alert",
+                                f"{win_adv['verdict']}:{win_adv['summary']}",
+                                win_adv["reasons"],
+                                assumption="基于四川血战早中盘 0 番点炮(+1分)与在场多家的自摸/暗杠/清一色期望对比。",
+                                pass_win_advice=win_adv,
+                            )
+                        )
         if hand.count(tile) >= 2:
             pong_adv = advise_pong(
                 state,
@@ -152,12 +163,16 @@ def build_alerts(
                 counts=counts,
                 danger_rows=danger_rows,
                 opp_reads=reads,
+                winners=winners,
             )
             findings.append(
                 counted(
                     "alert",
                     f"碰{label(tile_text)}[{pong_adv['verdict']}]:碰后打{pong_adv['best_discard']}向听 {pong_adv['sh_yes']}(进张 {pong_adv['live_yes']} 张);不碰向听 {no_action}(进张 {pong_adv['live_no']} 张)",
                     [pong_adv["summary"]] + pong_adv["reasons"] + ["碰会亮出副露,也会跳过中间玩家的摸牌"],
+                    pong_tile=label(tile_text),
+                    best_discard=pong_adv["best_discard"],
+                    waits_after=pong_adv.get("waits_after") or [],
                 )
             )
         if hand.count(tile) >= 3 and state.wall_count > 1:

@@ -372,3 +372,131 @@ def test_flush_building_pong_recommends_pong_instead_of_fake_speedup():
     pong_f = next(f for f in rep.sections["alerts"] if f.title.startswith("碰2条"))
     assert "建议碰" in pong_f.title
     assert "清一色" in "\n".join(pong_f.basis)
+
+
+def test_endgame_exact_enum_and_hollow_wait_detection():
+    # 实盘截图复现(余8张): 下家2明杠(1W/9W)剩7暗牌、缺条; 上家胡9T、对家自摸3T
+    # 1) 残局精确枚举应算出下家全部1798听牌型、纯万清一色仅22种、清晰区分 4万 风险 > 5万 风险;
+    # 2) 碰8万打5万听3条时, 必须附带 waits_after 并预警“牌面剩2张但墙内仅≈0.25张(疑空听)”!
+    from assistant.state import AssistantState, MeldView, PlayerView, WinRecord
+
+    players = (
+        PlayerView(
+            seat=0,
+            melds=(MeldView("pong", "4T"), MeldView("pong", "7W")),
+            river=("6B", "7B", "2W", "8B", "9T", "9B", "9B", "9B", "6B", "7T", "2W", "8B", "4B", "2W", "2B"),
+            discards=("6B", "7B", "2W", "8B", "9T", "9B", "9B", "9B", "6B", "7T", "2W", "8B", "4B", "2W", "2B"),
+            void_suit="B",
+            won=False,
+            hidden_count=0,
+        ),
+        PlayerView(
+            seat=1,
+            melds=(MeldView("kong", "1W"), MeldView("kong", "9W")),
+            river=("9T", "7T", "9T", "8T", "9B", "8B", "6T", "2B", "3T", "1B", "1B", "6T", "9T", "1T", "3B", "8W"),
+            discards=("9T", "7T", "9T", "8T", "9B", "8B", "6T", "2B", "3T", "1B", "1B", "6T", "9T", "1T", "3B", "8W"),
+            void_suit="T",
+            won=False,
+            hidden_count=7,
+        ),
+        PlayerView(
+            seat=2,
+            melds=(),
+            river=("3W", "6W", "2B", "8B", "6W", "3W", "5W", "8T", "5T", "5B", "5B"),
+            discards=("3W", "6W", "2B", "8B", "6W", "3W", "5W", "8T", "5T", "5B", "5B"),
+            void_suit="W",
+            won=True,
+            hidden_count=13,
+        ),
+        PlayerView(
+            seat=3,
+            melds=(),
+            river=("6B", "6W", "1B"),
+            discards=("6B", "6W", "1B"),
+            void_suit="B",
+            won=True,
+            hidden_count=13,
+        ),
+    )
+    wins = (
+        WinRecord(seat=3, tile="9T", self_draw=False, from_seat=0),
+        WinRecord(seat=2, tile="3T", self_draw=True, from_seat=None),
+    )
+    st = AssistantState(
+        perspective=0,
+        phase="play",
+        own_hand=("4W", "4W", "5W", "8W", "8W", "1T", "2T"),
+        players=players,
+        wall_count=8,
+        wins=wins,
+        pending_discard=(1, "8W"),
+    )
+    rep = analyze(st)
+    assert not rep.errors
+    assert len(rep.endgame_enums) == 1
+    em = rep.endgame_enums[0]
+    assert em["seat"] == 1
+    assert em["tenpai_hand_count"] == 1798
+    assert em["flush_suit"] == "W"
+    assert em["flush_hand_count"] == 22
+    assert 0.01 < em["flush_prob"] < 0.65
+
+    # 精确枚举介入 danger_rows: 4万 风险严格高于 5万, 且不再把两者粗暴并列估到 20%+
+    d_4w = next(r for r in rep.danger_rows if r["tile"] == "4万")["total_dealin_prob"]
+    d_5w = next(r for r in rep.danger_rows if r["tile"] == "5万")["total_dealin_prob"]
+    assert d_4w > d_5w + 0.01
+    assert d_5w < 0.16
+
+    # 碰8万提醒应包含 waits_after (听3条) 且识别墙内仅余 ~0.25 张(疑空听)
+    pong_f = next(f for f in rep.sections["alerts"] if f.title.startswith("碰8万"))
+    waits = pong_f.data.get("waits_after") or []
+    assert len(waits) == 1 and waits[0]["tile"] == "3条"
+    assert waits[0]["remaining"] == 2
+    assert waits[0]["wall_expected"] < 0.45
+    assert "疑空听" in "\n".join(pong_f.basis)
+
+
+def test_advise_win_or_pass_on_early_0fan_ron_with_10_tile_flush_and_trips():
+    # 实盘截图复现: 1T 3T 555T 777T 88T + 234B (10张条+双暗刻+2家缺条, 余35张, 3家全在场), 对家打2T可0番平胡(+1分)
+    # 规则提醒应保持 Tier-1 "可以胡2条:0 番,对家付 1 分", 并附加 Tier-3 "建议弃0番搏大" 参谋(自摸/暗杠/顺势清一色)
+    from assistant.state import AssistantState, MeldView, PlayerView
+
+    players = (
+        PlayerView(0, (), ("4W", "5W", "2W", "9B", "1B"), ("4W", "5W", "2W", "9B", "1B"), "W", False, 0),
+        PlayerView(1, (), ("2B", "1B", "9T", "2W", "8W"), ("2B", "1B", "9T", "2W", "8W"), "B", False, 13),
+        PlayerView(2, (MeldView("pong", "8B"),), ("2T", "9B", "6B", "9W", "3T", "2T"), ("2T", "9B", "6B", "9W", "3T", "2T"), "T", False, 10),
+        PlayerView(3, (), ("4T", "3T", "9T", "3T", "2T"), ("4T", "3T", "9T", "3T", "2T"), "T", False, 13),
+    )
+    st = AssistantState(
+        perspective=0,
+        phase="play",
+        own_hand=("1T", "3T", "5T", "5T", "5T", "7T", "7T", "7T", "8T", "8T", "2B", "3B", "4B"),
+        players=players,
+        wall_count=35,
+        current_player=2,
+        pending_discard=(2, "2T"),
+    )
+    rep = analyze(st)
+    assert not rep.errors
+    alerts = rep.sections["alerts"]
+    assert any(f.tier == 1 and f.title.startswith("可以胡2条:0 番") for f in alerts)
+    pass_adv = next((f for f in alerts if f.data and f.data.get("pass_win_advice")), None)
+    assert pass_adv is not None
+    assert pass_adv.data["pass_win_advice"]["verdict"] == "建议弃0番搏大"
+
+    # 若余墙进入残局(14张)则不再建议弃0番, 稳妥落袋
+    st_late = AssistantState(
+        perspective=0,
+        phase="play",
+        own_hand=st.own_hand,
+        players=players,
+        wall_count=14,
+        current_player=2,
+        pending_discard=(2, "2T"),
+    )
+    from assistant.tactics import advise_win_or_pass
+    from assistant.own_hand import build_own_hand
+    from engine.tiles import parse_tile
+
+    res_late = advise_win_or_pass(st_late, build_own_hand(st_late), parse_tile("2T"), 0, 1)
+    assert res_late["verdict"] == "建议直接胡"

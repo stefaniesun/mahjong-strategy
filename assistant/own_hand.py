@@ -307,9 +307,14 @@ def analyze_own_hand(
                 waits = []
             base_counts[index] += 1
             max_fan = max((w["fan"] for w in waits), default=None)
-            # 期望可摸池(扣除已胡者期望持有与换牌锁定)
-            exp_pool_live = sum(pool[u["index"]] for u in useful) if pool_total > 0 else float(live)
-            p_next = (exp_pool_live / pool_total) if pool_total > 0 else (live / counts.total_unseen if counts.total_unseen else 0.0)
+            # 期望可摸张数(结合已胡者反推、换牌底牌与对手定缺清门后的真实牌墙分布)
+            wall_exp_live = sum(wall_exp[u["index"]] for u in useful)
+            if state.wall_count > 0:
+                p_next = min(1.0, max(0.0, wall_exp_live / state.wall_count))
+            elif pool_total > 0:
+                p_next = sum(pool[u["index"]] for u in useful) / pool_total
+            else:
+                p_next = live / counts.total_unseen if counts.total_unseen else 0.0
             p_before = p_at_least_one(counts.total_unseen, live, draws)
             t_label = label(index)
             d_row = risk_by_tile.get(t_label)
@@ -323,7 +328,7 @@ def analyze_own_hand(
                     "useful": useful,
                     "useful_kinds": len(useful),
                     "live": live,
-                    "wall_expected_live": round(sum(wall_exp[u["index"]] for u in useful), 2),
+                    "wall_expected_live": round(wall_exp_live, 2),
                     "waits": waits,
                     "max_fan": max_fan,
                     "dead_wait": bool(waits) and all(w["remaining"] == 0 for w in waits),

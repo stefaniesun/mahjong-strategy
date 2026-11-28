@@ -2655,6 +2655,15 @@
         + (cur.winner_expected >= 0.2 ? `<span class="sh-pill win">已胡估扣 ≈${cur.winner_expected.toFixed(1)}</span>` : '')
         + `<span class="sh-pill">在场对手 ≈${cur.active_opp_expected.toFixed(1)}</span>`;
 
+      const enums = v.report?.endgame_enums || [];
+      const enumHtml = enums.map(em => {
+        const flTxt = em.flush_suit_label
+          ? `<span style="background:rgba(244,63,94,.22);border:1px solid rgba(251,113,133,.55);color:#fecdd3;padding:1px 5px;border-radius:5px;font-weight:700">清${esc(em.flush_suit_label)}≈${Math.round(em.flush_prob * 100)}%</span>`
+          : '';
+        const topW = (em.top_waits || []).slice(0, 4).map(w => `<span>${esc(w.tile)} ${Math.round(w.dealin_prob * 100)}%</span>`).join('');
+        return `<div class="sh-clue" style="background:rgba(244,63,94,.09);border-color:rgba(251,113,133,.32)"><div class="sh-clue-hd" style="color:#fda4af;display:flex;align-items:center;justify-content:space-between;gap:4px"><span>🎯 <b>${esc(em.name)}</b>(余${em.hidden_count}暗 · ${em.tenpai_hand_count}听型)</span>${flTxt}</div><div style="font-size:10px;color:#cbd5e1;margin-bottom:3px">${esc(em.supply_note)}</div>${topW ? `<div class="sh-hot">${topW}</div>` : ''}</div>`;
+      }).join('');
+
       const clues = (cur.winner_clues || []).map(cl => {
         const sureHtml = (cl.certain_tiles || []).map(ct => `<span style="background:rgba(56,189,248,.28);border:1px solid rgba(125,211,252,.65);color:#e0f2fe">必有 ${esc(ct.tile)}${ct.count > 1 ? '×' + ct.count : ''}</span>`).join('');
         const hotHtml = (cl.hot_tiles || []).slice(0, 4).map(h => `<span>${esc(h.tile)} ${Math.round(h.prob * 100)}%</span>`).join('');
@@ -2676,7 +2685,7 @@
         return `<div class="sh-cell ${zero ? 'zero' : ''} ${isW ? 'is-wait' : ''}" title="${esc(tip)}">${tileHtml(code, 'mini')}<div class="sh-cmeta"><b>${statusLbl}</b><span class="cw">${zero ? '' : '墙' + t.wall_expected.toFixed(1)}</span>${wk}</div></div>`;
       }).join('');
 
-      return `<div class="suit-hud"><div class="sh-top"><span class="sh-title">🔍 ${esc(cur.label)}子推理</span><div style="display:flex;align-items:center;gap:4px"><div class="sh-tabs">${tabs}</div><button class="sh-toggle" onclick="toggleSuitHud()">收起</button></div></div><div class="sh-pills">${pills}</div>${clues}<div class="sh-grid">${grid}</div></div>`;
+      return `<div class="suit-hud"><div class="sh-top"><span class="sh-title">🔍 ${esc(cur.label)}子推理</span><div style="display:flex;align-items:center;gap:4px"><div class="sh-tabs">${tabs}</div><button class="sh-toggle" onclick="toggleSuitHud()">收起</button></div></div><div class="sh-pills">${pills}</div>${enumHtml}${clues}<div class="sh-grid">${grid}</div></div>`;
     }
 
     function tenpaiDiscardMap() {
@@ -2709,6 +2718,13 @@
         waits = info.waits;
         const total = waits.reduce((s, w) => s + (Number(w.remaining) || 0), 0);
         headHtml = total > 0 ? '听牌' : '死听';
+      } else if (info.mode === 'wait') {
+        // 若正在响应碰牌且碰后直接听牌，主桌浮条直接预览碰后听口与墙内实余！
+        const pAlert = (v.report?.sections?.alerts || []).find(f => f.data && f.data.waits_after && f.data.waits_after.length);
+        if (pAlert) {
+          waits = pAlert.data.waits_after;
+          headHtml = `碰${miniL(pAlert.data.pong_tile)}打${miniL(pAlert.data.best_discard)}听`;
+        }
       } else if (info.mode === 'discard') {
         const tp = tenpaiDiscardMap();
         let chosen = null;
@@ -2737,11 +2753,18 @@
         const fanCls = fan >= 2 ? 'hi' : (fan === 1 ? 'mid' : '');
         const fanTxt = fan > 0 ? `${fan}番` : '平胡';
         const hasInf = rem > 0 && w.wall_expected !== undefined;
-        const wLock = (Number(w.winner_expected) || 0) >= 0.25 ? ` <span class="wlock">扣≈${Number(w.winner_expected).toFixed(1)}</span>` : '';
-        const infHtml = hasInf ? `<span class="td-inf">墙≈${Number(w.wall_expected).toFixed(1)}${wLock}</span>` : '';
+        const wExp = Number(w.wall_expected) || 0;
+        const winExp = Number(w.winner_expected) || 0;
+        const isHollow = hasInf && wExp < 0.45 && winExp >= 0.7;
+        const wLock = winExp >= 0.25 ? ` <span class="wlock">扣≈${winExp.toFixed(1)}</span>` : '';
+        const hollowTag = isHollow ? ` <span style="background:rgba(245,158,11,.28);color:#fde68a;border-radius:4px;padding:0 3px;font-weight:700">疑空</span>` : '';
+        const infHtml = hasInf ? `<span class="td-inf">墙≈${wExp.toFixed(1)}${wLock}${hollowTag}</span>` : '';
         return `<div class="td-item ${rem === 0 ? 'dead' : ''}">${tileHtml(code, 'mini')}<div class="td-meta"><span class="td-rem ${remCls}">${remTxt}</span><span class="td-fan ${fanCls}">${fanTxt}</span>${infHtml}</div></div>`;
       }).join('');
-      return `<div class="tenpai-dock ${deadAll ? 'dead' : ''}"><div class="td-head"><div class="td-title">${headHtml}</div><div class="td-sum">共 <b>${totalLive}</b> 张</div></div><div class="td-list">${itemsHtml}</div></div>`;
+      const totWall = waits.reduce((s, w) => s + (Number(w.wall_expected) || 0), 0);
+      const hasWall = waits.some(w => w.wall_expected !== undefined);
+      const sumSub = hasWall && totalLive > 0 ? ` · 墙≈<b>${totWall.toFixed(1)}</b>` : '';
+      return `<div class="tenpai-dock ${deadAll ? 'dead' : ''}"><div class="td-head"><div class="td-title">${headHtml}</div><div class="td-sum">牌面 <b>${totalLive}</b> 张${sumSub}</div></div><div class="td-list">${itemsHtml}</div></div>`;
     }
 
     function updateTenpaiPreview(code) {
@@ -2809,10 +2832,27 @@
         return `<div class="prompt">定缺:选一门这局不要的花色
       <div class="row">${d.void.map(s => `<button class="suitbtn ${s}" onclick="declareVoid('${s}')">缺${SUIT_CN[s]}<small>手里 ${counts[s]} 张</small></button>`).join('')}</div></div>`;
       }
-      const btns = d.buttons.map(b => {
+      const hasWin = d.buttons.some(b => b.kind === 'win');
+      const hasPong = d.buttons.some(b => b.kind === 'pong');
+      const passBtn = d.buttons.find(b => b.kind === 'pass');
+      const pendingTile = (v.pending && v.pending.seat !== 0) ? v.pending.tile : null;
+      const inHandCnt = pendingTile ? (v.hand || []).filter(c => c === pendingTile).length : 0;
+      const canPongAfterPass = hasWin && !hasPong && !!passBtn && !v.seats[0].won && inHandCnt >= 2;
+      const canKongAfterPass = canPongAfterPass && inHandCnt >= 3 && (v.wall || 0) > 1;
+
+      const btnParts = [];
+      for (const b of d.buttons) {
+        if (b.kind === 'pass' && canPongAfterPass) {
+          btnParts.push(`<button class="btn-act" title="先弃胡并立即碰此张（注意：弃胡后本圈触发过水胡锁，下巡摸牌解锁）" onclick="passWinThenAct(${passBtn.index}, 'pong')">碰<small style="font-size:10px;opacity:.85;display:block;line-height:1;margin-top:2px">弃胡改碰</small></button>`);
+          if (canKongAfterPass) {
+            btnParts.push(`<button class="btn-act" title="先弃胡并立即明杠此张（注意：弃胡后本圈触发过水胡锁，下巡摸牌解锁）" onclick="passWinThenAct(${passBtn.index}, 'kong')">杠<small style="font-size:10px;opacity:.85;display:block;line-height:1;margin-top:2px">弃胡改杠</small></button>`);
+          }
+        }
         const k = ['win', 'self_win', 'rob_kong_win'].includes(b.kind) ? 'win' : b.kind === 'pass' ? 'pass' : '';
-        return `<button class="btn-act ${k}" onclick="pressButton(${b.index})">${esc(b.label)}</button>`;
-      }).join('');
+        const titleAttr = (b.kind === 'pass' && canPongAfterPass) ? ' title="先弃胡（下一步可继续选碰或过）"' : '';
+        btnParts.push(`<button class="btn-act ${k}"${titleAttr} onclick="pressButton(${b.index})">${esc(b.label)}</button>`);
+      }
+      const btns = btnParts.join('');
       const tip = d.discard.length ? '' : '';
       return `<div class="actions">${btns}</div>${tip}`;
     }
@@ -2868,6 +2908,24 @@
     }
     function discard(code) { send({ kind: 'discard', tile: code }); }
     function pressButton(index) { send({ index }); }
+    async function passWinThenAct(passIdx, targetKind) {
+      if (busy) return;
+      busy = true;
+      try {
+        const r1 = await api('/api/act', { index: passIdx });
+        selected = [];
+        apply(r1);
+        const nextBtns = view?.decision?.buttons || [];
+        const follow = nextBtns.find(b => b.kind === targetKind);
+        if (follow) {
+          const r2 = await api('/api/act', { index: follow.index });
+          selected = [];
+          apply(r2);
+        }
+      } catch (e) { toast('操作失败:' + e.message); }
+      busy = false;
+      run();
+    }
     function declareVoid(s) { send({ kind: 'declare_void', suit: s }); }
     function confirmSwap() { if (selected.length === 3) send({ kind: 'swap_three', tiles: selected.map(i => view.hand[i]) }); }
     function pickSwap(labels) {
@@ -3047,8 +3105,14 @@
       }
       const alerts = rep.sections?.alerts || [];
       const winAlert = alerts.find(f => f.title.startsWith('可以自摸') || f.title.startsWith('可以胡') || f.title.startsWith('可以抢杠胡'));
+      const passWinAlert = alerts.find(f => f.data && f.data.pass_win_advice);
       if (winAlert) {
-        return `<div class="decision-hero"><div class="eyebrow">第一优先 · 胡牌</div><h3>${esc(winAlert.title)}</h3><div class="reason">${esc((winAlert.basis || []).join(' · ') || '满足胡牌条件')}</div></div>`;
+        if (passWinAlert && passWinAlert.data.pass_win_advice.verdict === '建议弃0番搏大') {
+          const adv = passWinAlert.data.pass_win_advice;
+          return `<div class="decision-hero"><div class="eyebrow">第一优先 · 攻守抉择（0番可胡）</div><h3><span style="color:#b45309">⚖ 建议弃0番搏大</span></h3><div class="reason">${esc(adv.summary)}</div><div class="quick-actions"><div class="quick-action"><b>${esc(winAlert.title)}</b>若求稳可直接胡</div></div></div>`;
+        }
+        const extra = passWinAlert ? `<div style="margin-top:6px;font-size:12px;color:#92400e;background:#fef3c7;border-radius:6px;padding:4px 8px">💡 ${esc(passWinAlert.data.pass_win_advice.summary)}</div>` : '';
+        return `<div class="decision-hero"><div class="eyebrow">第一优先 · 胡牌</div><h3>${esc(winAlert.title)}</h3><div class="reason">${esc((winAlert.basis || []).join(' · ') || '满足胡牌条件')}</div>${extra}</div>`;
       }
 
       // 优先提取所有碰/杠参谋, 并按「推荐杠 > 推荐碰 > 弃牌 > 建议过」排序, 彻底避免“建议不碰”盖掉“建议明杠/暗杠”!
@@ -3118,7 +3182,7 @@
         if (rep.flags.conflict) flags.push(`<span class="flag">求快打${esc(rep.flags.conflict.speed)},求番大打${esc(rep.flags.conflict.fan)}</span>`);
         if (rep.flags.defense_conflict) flags.push(`<span class="flag">攻防:求快打${esc(rep.flags.defense_conflict.speed)},求稳打${esc(rep.flags.defense_conflict.safe)}</span>`);
         const displayList = (info.discard_v2_options && info.discard_v2_options.length) ? info.discard_v2_options : info.candidates;
-        const rows = displayList.map(c => `<tr data-row-tile="${fromLabel(c.tile)}" title="${esc(c.ev_reason || '')}"><td>${miniL(c.tile)}</td><td>${c.shanten_after}</td><td>${c.useful_kinds}种 <b>${c.live}</b>张</td>
+        const rows = displayList.map(c => `<tr data-row-tile="${fromLabel(c.tile)}" title="${esc(c.ev_reason || '')}"><td>${miniL(c.tile)}</td><td>${c.shanten_after}</td><td>${c.useful_kinds}种 <b>${c.live}</b>张${c.wall_expected_live !== undefined ? `<br><small class="muted">墙≈${c.wall_expected_live.toFixed(1)}</small>` : ''}</td>
       <td>${c.max_fan === null ? '—' : c.max_fan + '番' + (c.dead_wait ? ' <span class="err">死听</span>' : '')}</td>
       <td class="${c.safe_all ? 'safe' : (c.dealin_prob >= 0.12 ? 'err' : 'p3')}">${c.safe_all ? '安全' : (c.dealin_prob !== undefined ? (c.dealin_prob * 100).toFixed(1) + '%' : '—')}</td>
       <td class="p3"><b>${c.ev_score !== undefined ? c.ev_score.toFixed(2) : '—'}</b></td>
@@ -3143,6 +3207,12 @@
         const threat = r.threats && r.threats.length ? ` · <span class="err">${esc(r.threats.join('/'))}</span>` : '';
         return `<span class="flag" title="${esc((r.basis || []).join('；'))}"><b>${esc(r.name)}</b> 听≈${pct(r.tenpai_prob)}${threat}</span>`;
       }).join('')}</div>` : '';
+      const enums = rep.endgame_enums || [];
+      const enumBar = enums.length ? enums.map(em => {
+        const fl = em.flush_suit_label ? ` · <b>清${esc(em.flush_suit_label)}概率≈${Math.round(em.flush_prob * 100)}%</b>` : '';
+        const tw = (em.top_waits || []).slice(0, 5).map(w => `${esc(w.tile)}(${Math.round(w.dealin_prob * 100)}%)`).join('、');
+        return `<div style="background:#fef2f2;border:1px solid #fecaca;border-radius:8px;padding:6px 8px;margin-bottom:8px;font-size:12px;color:#7f1d1d"><div>🎯 <b>${esc(em.name)}残局精确枚举</b>（余${em.hidden_count}暗 · ${em.tenpai_hand_count}听型${fl}）</div><div style="color:#475569;font-size:11px;margin-top:2px">${esc(em.supply_note)}</div>${tw ? `<div style="margin-top:2px;font-size:11px">最危听口：<b>${tw}</b></div>` : ''}</div>`;
+      }).join('') : '';
       const names = rows[0].per_opponent.map(e => e.name);
       const body = rows.map(r => `<tr data-row-tile="${fromLabel(r.tile)}"><td>${miniL(r.tile)}</td>${r.per_opponent.map(e => {
         if (e.safe) return `<td class="safe" title="${e.reason === 'void' ? '对方定缺这门' : e.reason === 'holds_void' ? '他还拿着你换给他的缺门牌,打出之前不能胡' : '所有等待形状都被堵死'}">100%安全</td>`;
@@ -3154,7 +3224,7 @@
       }).join('')}</tr>`).join('');
       const certain = (rep.sections.danger || []).filter(f => f.tier === 1);
       const rest = (rep.sections.danger || []).filter(f => f.tier !== 1);
-      return card('③', '安全度与读牌', `${readBar}<table class="t"><thead><tr><th>你的牌</th>${names.map(n => `<th>${esc(n)}</th>`).join('')}</tr></thead><tbody>${body}</tbody></table>
+      return card('③', '安全度与读牌', `${readBar}${enumBar}<table class="t"><thead><tr><th>你的牌</th>${names.map(n => `<th>${esc(n)}</th>`).join('')}</tr></thead><tbody>${body}</tbody></table>
     <div class="assume">百分比为大样本标定的单家点炮风险(结合听牌进度、现物/双筋、清一色偏向与换牌搭子);100%安全为零误判。</div>
     ${findingsBlock(certain, '确定结论')}${findingsBlock(rest, '计数与概率结论')}`, '停在格子上看形状与读牌');
     }
@@ -3287,7 +3357,7 @@
       document.getElementById('layer').innerHTML = `<div class="overlay"><div class="modal mark-box" style="width:min(580px,94vw)"><h3 style="font-size:22px;margin-bottom:6px">🚩 给辅助器提实时反馈</h3>
     <div class="muted" style="margin-bottom:10px;font-size:12px">会自动保存当前完整牌面、辅助器 EV 推荐、以及后台复盘用的三家暗牌线索（保存在 feedback_inbox.jsonl），随时喊我就能按你的线索升级辅助器。</div>
     <div style="margin-bottom:8px">${tagsHtml}</div>
-    <input id="markExpected" type="text" placeholder="我认为更好的选择（选填，例如：打5筒 / 不碰9条 / 换123万）" style="width:100%;padding:8px 10px;margin-bottom:8px;border-radius:8px;border:1px solid #3a4054;background:#0f1218;color:#f5efe0;font-size:13px" />
+    <input id="markpecpe="text" placeholder="我认为更好的选择（选填，例如：打5筒 / 不碰9条 / 换123万）" style="width:100%;padding:8px 10px;margin-bottom:8px;border-radius:8px;border:1px solid #3a4054;background:#0f1218;color:#f5efe0;font-size:13px" />
     <textarea id="markNote" placeholder="你的牌理思路或吐槽（选填，例如：下家明显清一色条，这里不该拆两面 / 应该保清一色）"></textarea>
     <div class="foot"><button class="btn-act pass" onclick="document.getElementById('layer').innerHTML='';if(view&&view.finished)closeLayer()">取消</button><button class="btn-act" onclick="saveMark()">保存反馈</button></div></div></div>`;
       setTimeout(() => document.getElementById('markExpected').focus(), 50);

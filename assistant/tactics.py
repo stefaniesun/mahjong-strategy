@@ -176,6 +176,7 @@ def advise_pong(
     danger_rows: list[dict] | None = None,
     opp_reads: dict[int, OpponentRead] | None = None,
     floors: dict[int, list[int]] | None = None,
+    winners: list | None = None,
 ) -> dict:
     """按统一 discard_v2 EV 口径评估碰 tile 与不碰的实战净收益, 返回结构化建议与依据。"""
     void = own_void(state)
@@ -267,6 +268,26 @@ def advise_pong(
         f"碰后打{label(disc_idx)}:向听 {sh_yes}, 有效进张 {live_yes} 张 (EV {pong_ev:+.2f}, 净差 {delta_ev:+.2f})"
         + (f" | 弃牌点炮风险约 {disc_risk:.0%}" if disc_risk > 0 else " | 弃牌安全"),
     ]
+    waits_after: list[dict] = []
+    if sh_yes == 0:
+        from assistant.danger import estimate_wall_expected
+        from assistant.own_hand import wait_table
+
+        after_disc_hand = copy_hand(after)
+        after_disc_hand.remove(Tile.from_index(disc_idx))
+        w_exp, win_exp, opp_exp = estimate_wall_expected(state, t_counts, winners or [], floors)
+        waits_after = wait_table(after_disc_hand, void, t_counts, state, eff_unseen, w_exp, win_exp, opp_exp)
+        if waits_after:
+            tot_rem = sum(w["remaining"] for w in waits_after)
+            tot_wall = sum(w.get("wall_expected", 0.0) for w in waits_after)
+            tot_win = sum(w.get("winner_expected", 0.0) for w in waits_after)
+            w_txt = "、".join(
+                f"{w['tile']}(剩{w['remaining']}·墙≈{w.get('wall_expected', 0.0):.1f})" for w in waits_after[:4]
+            )
+            hollow_note = ""
+            if tot_rem > 0 and tot_wall < 0.45 and tot_win >= 0.7:
+                hollow_note = f" — 注意:已胡估扣 {tot_win:.1f} 张, 牌墙仅剩约 {tot_wall:.2f} 张(疑空听,以保叫为主)"
+            reasons.append(f"碰后听口:{w_txt}{hollow_note}")
 
     if breaks_seven_pairs:
         verdict = "建议不碰"
@@ -330,8 +351,86 @@ def advise_pong(
         "pass_ev": round(pass_ev, 3),
         "pong_ev": round(pong_ev, 3),
         "delta_ev": round(delta_ev, 3),
+        "waits_after": waits_after,
         "reasons": reasons,
     }
+
+
+def advise_win_or_pass(
+    state: AssistantState,
+    hand: Hand,
+    tile: Tile,
+    win_fan: int,
+    win_score: int,
+    opp_reads: dict[int, OpponentRead] | None = None,
+) -> dict:
+    """评估早中盘面对 0 番点炮胡(+1分)时, 是直接落袋还是弃0番搏大(自摸/暗杠/换多面听/清一色)。
+
+    仅针对他家点炮的 0 番平胡; 自摸、抢杠胡或 >=1 番点炮均直接建议胡。
+    """
+    if win_fan > 0 or state.wall_count < 24:
+        return {"verdict": "建议直接胡", "summary": "", "reasons": []}
+
+    active_opps = state.active_opponents()
+    n_active = len(active_opps)
+    if n_active < 2:
+        return {"verdict": "建议直接胡", "summary": "", "reasons": []}
+
+    reads = opp_reads or {}
+    # 若场上有对手显露强清一色 / 3副露快听 / 极高听牌警戒, 直接胡牌离场止险
+    danger_opps = [
+        r for r in reads.values()
+        if r.flush_level == "strong" or r.n_melds >= 3 or r.tenpai_prob >= 0.78
+    ]
+    if danger_opps:
+        return {"verdict": "建议直接胡", "summary": "", "reasons": []}
+
+    void_code = state.me.void_suit
+    void_idx = SUITS.index(Suit(void_code)) if void_code else None
+    suit_totals = [sum(hand.counts[s * 9 : (s + 1) * 9]) for s in range(3)]
+    meld_suits: set[int] = set()
+    for m in hand.melds:
+        ms = SUITS.index(m.tiles[0].suit)
+        suit_totals[ms] += 3
+        meld_suits.add(ms)
+    dom_suit = max(range(3), key=lambda s: suit_totals[s])
+    n_dom = suit_totals[dom_suit]
+    dom_code = SUITS[dom_suit].value
+    dom_cn = {"W": "万", "T": "条", "B": "筒"}[dom_code]
+    opp_void_dom = sum(1 for p in active_opps if p.void_suit == dom_code)
+
+    has_flush_path = (n_dom >= 10) and (dom_suit != void_idx) and (not meld_suits or meld_suits == {dom_suit})
+    concealed_trips = sum(1 for c in hand.counts if c >= 3)
+    base = max(1, state.rule_config.base_score)
+    tsumo_0fan_total = 2 * base * n_active  # 自摸加底/加番, 每家至少 2 分 x 在场家数
+
+    reasons: list[str] = []
+    if has_flush_path and (n_active == 3 or opp_void_dom >= 1 or concealed_trips >= 1):
+        verdict = "建议弃0番搏大"
+        trip_txt = f"、{concealed_trips} 组暗刻(可摸暗杠+根)" if concealed_trips >= 1 else ""
+        void_txt = f"、{opp_void_dom} 家缺{dom_cn}" if opp_void_dom >= 1 else ""
+        summary = (
+            f"当前仅 0 番点炮(+{win_score}分), 但手握 {n_dom} 张{dom_cn}子{trip_txt}{void_txt}(余墙 {state.wall_count} 张·在场 {n_active} 家), "
+            f"建议弃胡搏自摸(+{tsumo_0fan_total}分+)/暗杠或顺势转清一色"
+        )
+        reasons.append(f"点炮平胡仅得 {win_score} 分; 在场 {n_active} 家时即使 0 番自摸也能收约 {tsumo_0fan_total} 分(带根/清一色可达 4~24 分)")
+        if concealed_trips >= 1:
+            reasons.append(f"手里已有 {concealed_trips} 组暗刻: 留听牌不仅可摸暗杠立收 {2 * base * n_active} 分+1根, 摸主花色邻张还能换多面带根听口")
+        reasons.append(f"清一色策略提示: 优先保留现有成型副顺维持听牌防点炮, 待摸进第 11~12 张{dom_cn}子或对子成势后再顺势拆他门冲清一色")
+        reasons.append("注意过庄规则: 弃胡后至下巡自己摸牌前, 只能胡 >=1 番点炮或自摸")
+        return {"verdict": verdict, "summary": summary, "reasons": reasons, "dom_suit": dom_cn, "n_dom": n_dom}
+
+    if n_active == 3 and state.wall_count >= 28 and concealed_trips >= 1:
+        verdict = "建议弃0番搏大" if (concealed_trips >= 2 or state.wall_count >= 32) else "可权衡弃0番"
+        summary = (
+            f"早中盘(余 {state.wall_count} 张·3家全在场)且手握 {concealed_trips} 组暗刻, "
+            f"0 番点炮仅 +{win_score} 分, 可弃胡留听搏自摸(+{tsumo_0fan_total}分+)/暗杠(+{2 * base * n_active}分+根)与换听升级"
+        )
+        reasons.append(f"3 家全在场时自摸收益是 0 番点炮的 6 倍(+{tsumo_0fan_total}分 vs +{win_score}分), 摸暗杠立收 {2 * base * n_active} 分+1根")
+        reasons.append("注意过庄规则: 弃胡后至下巡自己摸牌前, 只能胡 >=1 番点炮或自摸")
+        return {"verdict": verdict, "summary": summary, "reasons": reasons, "dom_suit": dom_cn, "n_dom": n_dom}
+
+    return {"verdict": "建议直接胡", "summary": "", "reasons": []}
 
 
 def advise_kong(
@@ -454,11 +553,18 @@ def analyze_endgame_chajiao(
         waits = waits or []
         max_fan = max((w["fan"] for w in waits), default=0)
         is_dead = bool(waits) and all(w["remaining"] == 0 for w in waits)
+        tot_wall = sum(w.get("wall_expected", 0.0) for w in waits)
+        tot_win = sum(w.get("winner_expected", 0.0) for w in waits)
+        hollow_warn = (
+            f" (⚠️ 牌面虽有剩张, 但已胡估扣 {tot_win:.1f} 张、墙内仅≈{tot_wall:.2f} 张, 疑空听以保叫为主)"
+            if (not is_dead and bool(waits) and tot_wall < 0.45 and tot_win >= 0.7)
+            else ""
+        )
         exp_unready_opps = sum(1.0 - r.tenpai_prob for r in opp_reads.values())
         advice = (
             "你已听牌(死听仍算有叫): 切勿盲目拆牌变无叫, 优先保叫免查叫并守住杠钱"
             if is_dead
-            else f"残局已听牌(最高 {max_fan} 番): 预计对手中约 {exp_unready_opps:.1f} 家未听, 流局可收查叫, 除非摸到极危大牌炮张否则严禁拆听"
+            else f"残局已听牌(最高 {max_fan} 番): 预计对手中约 {exp_unready_opps:.1f} 家未听, 流局可收查叫, 除非摸到极危大牌炮张否则严禁拆听{hollow_warn}"
         )
         info = {
             "status": "ready",

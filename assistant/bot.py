@@ -14,6 +14,7 @@ import random
 from collections.abc import Sequence
 
 from engine.actions import Action, ActionKind
+from engine.fan_calc import WinContext, calculate_fan
 from engine.gang import GangKind
 from engine.state import GameState
 from engine.tiles import SUITS, Tile
@@ -30,10 +31,10 @@ from assistant.discard_v2 import (
 )
 from assistant.known_holdings import swap_floors
 from assistant.opponent_read import read_all_opponents
-from assistant.own_hand import analyze_own_hand, build_own_hand, fast_shanten_hand
+from assistant.own_hand import analyze_own_hand, build_own_hand, copy_hand, fast_shanten_hand
 from assistant.recorder import PublicRecorder
 from assistant.swap_v2 import choose_swap_v2_indices, sample_swap_v2_indices
-from assistant.tactics import advise_kong, advise_pong
+from assistant.tactics import advise_kong, advise_pong, advise_win_or_pass
 from assistant.tiles import from_label, label, tidx
 from assistant.void_v3 import choose_void_v3_idx, sample_void_v3_idx
 from assistant.winner_inference import infer_winners
@@ -74,11 +75,45 @@ class AssistantPolicy(BasePolicy):
         if len(legal_actions) == 1:
             return legal_actions[0]
 
-        # 1) 能胡必胡(抢杠胡 / 点炮胡 / 自摸)
-        for kind in (ActionKind.ROB_KONG_WIN, ActionKind.WIN, ActionKind.SELF_WIN):
+        # 1) 抢杠胡 / 自摸必胡; 早中盘 0 番点炮胡结合 advise_win_or_pass 判是否弃 0 番搏大(200局配对实测 +0.18 分/局)
+        for kind in (ActionKind.ROB_KONG_WIN, ActionKind.SELF_WIN):
             for act in legal_actions:
                 if act.kind is kind:
                     return act
+        win_act = next((a for a in legal_actions if a.kind is ActionKind.WIN), None)
+        if win_act is not None:
+            pass_act = next((a for a in legal_actions if a.kind is ActionKind.PASS), None)
+            if (
+                pass_act is not None
+                and engine_state.pending_discard is not None
+                and len(engine_state.wall) >= 24
+                and sum(1 for s in range(4) if s != actor and not engine_state.won[s]) >= 2
+            ):
+                trial = copy_hand(engine_state.hands[actor])
+                trial.add(engine_state.pending_discard.tile)
+                wres = calculate_fan(
+                    trial,
+                    WinContext(
+                        after_kong=engine_state.pending_discard_after_kong,
+                        haidi=engine_state.pending_discard_last_wall,
+                    ),
+                    engine_state.rule_config,
+                )
+                if wres.fan == 0:
+                    st_win = build_state(engine_state, recorder, actor)
+                    fl_win = swap_floors(st_win)
+                    reads_win = read_all_opponents(st_win, fl_win)
+                    adv = advise_win_or_pass(
+                        st_win,
+                        engine_state.hands[actor],
+                        engine_state.pending_discard.tile,
+                        wres.fan,
+                        wres.score_per_payer,
+                        reads_win,
+                    )
+                    if adv["verdict"] == "建议弃0番搏大":
+                        return pass_act
+            return win_act
 
         # 2) 换三张 (sample_swap_v2)
         if engine_state.phase == "swap_three":

@@ -10,6 +10,7 @@ import numpy as np
 from assistant.alerts import build_alerts
 from assistant.counting import TileCounts, breakdown_text, compute_counts, conservation_errors, seen_breakdown
 from assistant.danger import analyze_danger, estimate_wall_expected, random_pool
+from assistant.endgame_enum import enumerate_endgame_opponents
 from assistant.known_holdings import swap_floors
 from assistant.opening import analyze_opening, swap_tracking
 from assistant.opponent_read import OpponentRead, read_all_opponents
@@ -39,6 +40,7 @@ class Report:
     opening_info: dict | None = None
     remaining_rows: list[dict] = field(default_factory=list)
     suit_inference: list[dict] = field(default_factory=list)
+    endgame_enums: list[dict] = field(default_factory=list)
     sections: dict[str, list[Finding]] = field(default_factory=dict)
     winner_items: list[dict] = field(default_factory=list)
     elapsed_ms: float = 0.0
@@ -73,6 +75,7 @@ class Report:
             "winners": self.winner_items,
             "remaining": self.remaining_rows,
             "suit_inference": self.suit_inference,
+            "endgame_enums": self.endgame_enums,
             "flags": self.flags,
             "elapsed_ms": round(self.elapsed_ms, 2),
         }
@@ -337,12 +340,16 @@ def analyze(state: AssistantState) -> Report:
         floors = swap_floors(state)
         winners = infer_winners(state, counts, floors=floors)
         opp_reads = read_all_opponents(state, floors)
+        endgame_enums = enumerate_endgame_opponents(state, counts, winners, floors, opp_reads)
         report.winners = winners
         report.opponent_reads = [r.to_dict() for r in opp_reads.values()]
+        report.endgame_enums = [e.to_dict() for e in endgame_enums.values()]
         report.winner_items, sections["winners"] = _winner_section(state, winners)
         report.remaining_rows, report.suit_inference, sections["remaining"] = _remaining_section(state, counts, winners, floors)
         if not state.me.won and state.own_hand:
-            report.danger_rows, danger_findings = analyze_danger(state, counts, winners, floors, opponent_reads=opp_reads)
+            report.danger_rows, danger_findings = analyze_danger(
+                state, counts, winners, floors, opponent_reads=opp_reads, endgame_enums=endgame_enums
+            )
             # 在安全度面板顶部置入对手听牌进度与大牌型预警摘要
             read_findings: list[Finding] = []
             for r in opp_reads.values():

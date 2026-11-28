@@ -216,9 +216,11 @@ def analyze_danger(
     winners: list[WinnerInference],
     floors: Floors | None = None,
     opponent_reads: dict[int, OpponentRead] | None = None,
+    endgame_enums: dict | None = None,
 ) -> tuple[list[dict], list[Finding]]:
     floors = floors or {}
     reads = opponent_reads if opponent_reads is not None else read_all_opponents(state, floors)
+    enums = endgame_enums or {}
     zero = (0,) * 27
     own_tiles = sorted({tidx(tile) for tile in state.own_hand})
     opponents = state.active_opponents()
@@ -308,6 +310,18 @@ def analyze_danger(
                     none_prob *= 1.0 - shape.get("hold_prob", 0.0)
                 entry["any_shape_prob"] = 1.0 - none_prob
                 dealin_p, risk_tags = estimate_dealin_prob(index, opp_read, counts, possible_shapes)
+                e_enum = enums.get(view.seat)
+                if e_enum is not None:
+                    e_cond = e_enum.exact_wait_prob[index]
+                    tp_scale = opp_read.tenpai_prob if opp_read is not None else 1.0
+                    exact_dp = e_cond * tp_scale
+                    if e_enum.complete and e_cond <= 1e-9:
+                        dealin_p = 0.0
+                        risk_tags = ["残局枚举0听口(安全)"]
+                    else:
+                        dealin_p = 0.72 * exact_dp + 0.28 * dealin_p
+                        if e_cond >= 0.15:
+                            risk_tags = list(risk_tags) + [f"残局枚举听率{e_cond:.0%}"]
                 entry["dealin_prob"] = round(dealin_p, 4)
                 entry["risk_tags"] = risk_tags
                 not_dealin_all *= 1.0 - dealin_p
