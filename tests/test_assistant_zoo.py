@@ -21,35 +21,40 @@ def test_zoo_lists_and_isolates_v2_and_v3_snapshots():
     assert "v3_goodwait_read" in versions
     assert "v4_waitq_tactics" in versions
     assert "v5_unified_ev" in versions
+    assert "v6_human_tactics" in versions
 
     m2 = get_manifest("v2_ev_base")
     m3 = get_manifest("v3_goodwait_read")
     m4 = get_manifest("v4_waitq_tactics")
     m5 = get_manifest("v5_unified_ev")
+    m6 = get_manifest("v6_human_tactics")
     assert m2["git_commit"] == "8cb0cfc"
     assert m3["git_commit"] == "3f0bcd9"
     assert m4["git_commit"] == "66e601a"
     assert m5["git_commit"] == "0eaef06"
+    assert m6["git_commit"] == "481df17"
 
     p2 = load_version("v2_ev_base", stochastic=False)
     p3 = load_version("v3_goodwait_read", stochastic=False)
     p4 = load_version("v4_waitq_tactics", stochastic=False)
     p5 = load_version("v5_unified_ev", stochastic=False)
+    p6 = load_version("v6_human_tactics", stochastic=False)
     # 必须是各自独立冻结的模块类, 互不污染
-    assert len({type(p2), type(p3), type(p4), type(p5)}) == 4
+    assert len({type(p2), type(p3), type(p4), type(p5), type(p6)}) == 5
     assert type(p2).__module__ == "assistant.zoo.v2_ev_base.pkg.bot"
     assert type(p3).__module__ == "assistant.zoo.v3_goodwait_read.pkg.bot"
     assert type(p4).__module__ == "assistant.zoo.v4_waitq_tactics.pkg.bot"
     assert type(p5).__module__ == "assistant.zoo.v5_unified_ev.pkg.bot"
+    assert type(p6).__module__ == "assistant.zoo.v6_human_tactics.pkg.bot"
 
 
 def test_zoo_cross_version_table_plays_legal_complete_games():
-    pool = build_opponent_pool(["v3_goodwait_read", "v4_waitq_tactics", "v5_unified_ev"], seed=7)
+    pool = build_opponent_pool(["v4_waitq_tactics", "v5_unified_ev", "v6_human_tactics"], seed=7)
     lineup = [
-        pool["v3_goodwait_read_det"],
         pool["v4_waitq_tactics_det"],
         pool["v5_unified_ev_det"],
-        pool["v5_unified_ev_rand"],
+        pool["v6_human_tactics_det"],
+        pool["v6_human_tactics_rand"],
     ]
     for seed in (301, 302):
         game = Game(seed=seed, dealer=seed % 4)

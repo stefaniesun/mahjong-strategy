@@ -14,17 +14,17 @@ S4_POLICY = ROOT / "training_artifacts" / "S4" / "v5_20260718_encoder_v4" / "che
 
 # 仅保留万局实测头部强策略(完全剔除 s3_rule / s3_plus / s4_v5 / v2 等弱策略)
 TOP_MIX_ROSTER: tuple[tuple[str, bool, str], ...] = (
+    ("v6_human_tactics", False, "v6实战精调"),
+    ("v6_human_tactics", True, "v6精调·随"),
     ("v5_unified_ev", False, "v5统一EV"),
     ("v5_unified_ev", True, "v5统一EV·随"),
     ("v4_waitq_tactics", False, "v4听口暗杠"),
-    ("v4_waitq_tactics", True, "v4听口·随"),
     ("v3_goodwait_read", False, "v3快攻读牌"),
-    ("v3_goodwait_read", True, "v3快攻·随"),
 )
 
 
 class TopMixOpponentPool(BasePolicy):
-    """每局为下家/对家/上家随机分配不同头部强策略(v5/v4/v3), 模拟风格各异的真人高手对局。"""
+    """每局为下家/对家/上家随机分配不同头部强策略(v6/v5/v4/v3), 模拟风格各异的真人高手对局。"""
 
     def __init__(self) -> None:
         from assistant.zoo import load_version
@@ -55,7 +55,7 @@ class TopMixOpponentPool(BasePolicy):
         return {s: spec[2] for s, spec in self._seat_spec.items()}
 
     def choose_action(self, protocol_state, legal_mask: Sequence[bool]):
-        return self._instances[("v5_unified_ev", False)].choose_action(protocol_state, legal_mask)
+        return self._instances[("v6_human_tactics", False)].choose_action(protocol_state, legal_mask)
 
     def choose_from_game(self, engine_state, recorder, actor: int, legal_actions):
         spec = self._seat_spec.get(actor, self._specs[0])
@@ -65,7 +65,7 @@ class TopMixOpponentPool(BasePolicy):
 
 def load_ai(kind: str, checkpoint: Path | None = None, s4_policy: Path = S4_POLICY) -> tuple[BasePolicy, str]:
     if kind == "top_mix":
-        return TopMixOpponentPool(), "顶级混编 (v5/v4/v3 每局随机)"
+        return TopMixOpponentPool(), "顶级混编 (v6/v5/v4/v3 每局随机)"
     if kind == "rule":
         return RulePolicy(), "S3 规则 AI"
     if kind == "rule_plus":

@@ -51,18 +51,19 @@ from state.adapters.from_engine import from_engine
 from state.tile_belief import generate_belief_labels
 
 DEFAULT_TEACHERS = (
+    "v6_human_tactics_det",
+    "v6_human_tactics_det",
+    "v5_unified_ev_det",
+    "v5_unified_ev_det",
     "v4_waitq_tactics_det",
-    "v4_waitq_tactics_det",
-    "v4_waitq_tactics_det",
-    "v3_goodwait_read_det",
-    "v3_goodwait_read_det",
-)  # 60% v4 + 40% v3
+)  # 40% v6 + 40% v5 + 20% v4
 DEFAULT_OPPONENTS = (
+    "v6_human_tactics_rand",
+    "v5_unified_ev_rand",
     "v4_waitq_tactics_rand",
     "v3_goodwait_read_rand",
     "v2_ev_base_det",
     "s3_plus",
-    "s3_rule",
 )
 
 _WORKER_POLICIES: dict[str, Any] = {}

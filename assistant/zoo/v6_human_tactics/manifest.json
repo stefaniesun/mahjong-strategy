@@ -1,0 +1,8 @@
+{
+  "version": "v6_human_tactics",
+  "git_commit": "481df17",
+  "git_subject": "feat(assistant,play): v6 human-calibrated tactics, Long-7p shanten, void-aware wall & UI upgrades",
+  "created_at": "2026-11-28 15:53:23",
+  "note": "人类高水平实战精调版: 清缺生张中张顺序 + 普通4~5对子果断碰牌 + 听牌换听改良/摸杠潜力 + 四川龙七对精确向听 + 早中盘10+张清一色动态潜力与成势碰 + 断张胡牌确定档反推 + 定缺感知牌墙IPF校正",
+  "benchmark": {}
+}
