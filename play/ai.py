@@ -1,7 +1,10 @@
 """对手 AI 的加载:S4 监督模型、S5 强化学习存档,或 S3 规则 AI(调试用,启动最快)。"""
 from __future__ import annotations
 
+import random
+from collections.abc import Sequence
 from pathlib import Path
+from typing import Any
 
 from policies.base_policy import BasePolicy
 from policies.rule_policy import RulePolicy
@@ -9,8 +12,60 @@ from policies.rule_policy import RulePolicy
 ROOT = Path(__file__).resolve().parents[1]
 S4_POLICY = ROOT / "training_artifacts" / "S4" / "v5_20260718_encoder_v4" / "checkpoints" / "policy_s4.pt"
 
+# 仅保留万局实测头部强策略(完全剔除 s3_rule / s3_plus / s4_v5 / v2 等弱策略)
+TOP_MIX_ROSTER: tuple[tuple[str, bool, str], ...] = (
+    ("v5_unified_ev", False, "v5统一EV"),
+    ("v5_unified_ev", True, "v5统一EV·随"),
+    ("v4_waitq_tactics", False, "v4听口暗杠"),
+    ("v4_waitq_tactics", True, "v4听口·随"),
+    ("v3_goodwait_read", False, "v3快攻读牌"),
+    ("v3_goodwait_read", True, "v3快攻·随"),
+)
+
+
+class TopMixOpponentPool(BasePolicy):
+    """每局为下家/对家/上家随机分配不同头部强策略(v5/v4/v3), 模拟风格各异的真人高手对局。"""
+
+    def __init__(self) -> None:
+        from assistant.zoo import load_version
+
+        self._specs = list(TOP_MIX_ROSTER)
+        self._instances: dict[tuple[str, bool], Any] = {
+            (ver, stoch): load_version(ver, stochastic=stoch, exact_swap_live=False)
+            for ver, stoch, _ in self._specs
+        }
+        self._seat_spec: dict[int, tuple[str, bool, str]] = {}
+        self.assign_hand_seats(random.Random(0), seed=0)
+
+    def assign_hand_seats(self, rng: random.Random, seed: int) -> None:
+        # 尽量让三家风格各不相同(不重复抽样), 更贴近真实三家真人
+        chosen = rng.sample(self._specs, k=3)
+        for offset, seat in enumerate((1, 2, 3)):
+            spec = chosen[offset]
+            self._seat_spec[seat] = spec
+            pol = self._instances[(spec[0], spec[1])]
+            if hasattr(pol, "rng"):
+                pol.rng = random.Random(seed * 31 + seat * 17 + offset)
+
+    def seat_label(self, seat: int) -> str | None:
+        spec = self._seat_spec.get(seat)
+        return spec[2] if spec else None
+
+    def seat_summary(self) -> dict[int, str]:
+        return {s: spec[2] for s, spec in self._seat_spec.items()}
+
+    def choose_action(self, protocol_state, legal_mask: Sequence[bool]):
+        return self._instances[("v5_unified_ev", False)].choose_action(protocol_state, legal_mask)
+
+    def choose_from_game(self, engine_state, recorder, actor: int, legal_actions):
+        spec = self._seat_spec.get(actor, self._specs[0])
+        pol = self._instances[(spec[0], spec[1])]
+        return pol.choose_from_game(engine_state, recorder, actor, legal_actions)
+
 
 def load_ai(kind: str, checkpoint: Path | None = None, s4_policy: Path = S4_POLICY) -> tuple[BasePolicy, str]:
+    if kind == "top_mix":
+        return TopMixOpponentPool(), "顶级混编 (v5/v4/v3 每局随机)"
     if kind == "rule":
         return RulePolicy(), "S3 规则 AI"
     if kind == "rule_plus":

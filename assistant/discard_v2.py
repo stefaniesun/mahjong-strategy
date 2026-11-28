@@ -33,6 +33,8 @@ class DiscardV2Config:
     w_good_wait_1sh: float = 0.28  # 1向听摸入有效张后听牌宽度的对数期望(偏爱两面好型、避边嵌死口)
     w_pong_speedup: float = 0.14   # 四川血战可碰对子三家提速进张红利
     w_tenpai_ev: float = 0.85      # 听牌期 log1p(加权胡牌分期望) 收益
+    w_tenpai_upgrade: float = 0.16 # 听牌期换听改良潜力(保留活单钓+暗刻/顺子换多面听)
+    w_tenpai_kong: float = 0.06    # 听牌期暗刻暗杠/碰牌补杠摸杠潜力
     w_dead_wait_pen: float = 1.65  # 中盘死听惩罚(残局可被保叫红利抵消)
     w_flush_pot: float = 0.55      # 10+ 张清一色路线留同花色红利
     w_seven_pairs: float = 0.45    # <=1 向听七对路线保对子红利
@@ -81,7 +83,9 @@ def _centrality_penalty(tile_idx: int) -> int:
         return 0
     if r in (2, 8):
         return 1
-    return 2
+    if r in (3, 7):
+        return 2
+    return 3  # 4, 5, 6 中心张
 
 
 def _shape_quality(counts: list[int], void_idx: int | None) -> float:
@@ -117,16 +121,54 @@ def _shape_quality(counts: list[int], void_idx: int | None) -> float:
 
 
 def _seven_pairs_shanten_after(counts: list[int], void_idx: int | None) -> int:
-    pairs = 0
-    unique = 0
+    sp_pairs = 0
+    sp_slots = 0
     for i, c in enumerate(counts):
         if void_idx is not None and i // 9 == void_idx:
             continue
-        if c >= 2:
-            pairs += 1
         if c > 0:
-            unique += 1
-    return 6 - pairs + max(0, 7 - unique)
+            sp_pairs += c >> 1
+            sp_slots += (c + 1) >> 1
+    return 6 - sp_pairs + max(0, 7 - sp_slots)
+
+
+def _flush_potential_bonus(
+    counts13: list[int],
+    melds: Sequence[Meld],
+    void_idx: int | None,
+    sh: int,
+    state: AssistantState,
+    config: DiscardV2Config,
+) -> float:
+    """评估 10+ 张主花色手牌的清一色/清对对大番潜力(兼顾张数、同花色可碰对子、对手缺该门与剩余牌墙)。"""
+    if sh > 2:
+        return 0.0
+    suit_totals = [sum(counts13[s * 9 : (s + 1) * 9]) for s in range(3)]
+    meld_suits: set[int] = set()
+    for m in melds:
+        ms = SUITS.index(m.tiles[0].suit)
+        suit_totals[ms] += 3
+        meld_suits.add(ms)
+    dom_suit = max(range(3), key=lambda s: suit_totals[s])
+    n_dom = suit_totals[dom_suit]
+    if n_dom < 10 or dom_suit == void_idx or (meld_suits and meld_suits != {dom_suit}):
+        return 0.0
+
+    # 基础清一色红利 + 超过10张后的递增红利(11/12/13张越来越接近清一色听牌)
+    wall_scale = min(1.0, max(0.0, (state.wall_count - 16) / 24.0))
+    bonus = config.w_flush_pot + wall_scale * 0.42 * (n_dom - 10)
+    # 早中盘多对子可连碰(清一色+对对胡 3番路线)与对手缺该门(稳稳喂碰/喂胡)加成
+    if wall_scale > 0.0:
+        base = dom_suit * 9
+        flush_pairs = sum(1 for r in range(9) if counts13[base + r] >= 2)
+        dom_code = SUITS[dom_suit].value
+        opp_void_dom = sum(1 for p in state.active_opponents() if p.void_suit == dom_code)
+        bonus += wall_scale * (
+            0.16 * min(3, flush_pairs)
+            + 0.16 * min(2, opp_void_dom)
+            + (0.12 if len(melds) >= 1 else 0.0)
+        )
+    return bonus
 
 
 def _fast_tenpai_fan_mult(
@@ -231,6 +273,76 @@ def _one_shanten_good_wait_quality(
         total_w += rem
         acc += rem * math.log1p(best_wait_ev)
     return (acc / total_w) if total_w > 0 else 0.0
+
+
+def _tenpai_upgrade_bonus(
+    counts13: list[int],
+    melds: Sequence[Meld],
+    void_idx: int | None,
+    cur_wait_live: int,
+    cur_wait_indices: set[int],
+    unseen: tuple[int, ...],
+    wall_count: int,
+    config: DiscardV2Config,
+) -> float:
+    """听牌期(0向听)未来换听改良与摸杠潜力评估(耗时 <0.15ms)。
+
+    在牌墙仍有充足余张(wall >= 16)时:
+    1. 统计能把当前听口显著拓宽(至少 +2 张活口)的未现改良张数(如 333条+456筒+单钓8条 摸 2/4条、3/6筒变多面听);
+    2. 计入暗刻(待暗杠)与已碰副露(待补杠)的摸杠期望红利。
+    """
+    if wall_count < 16 or (config.w_tenpai_upgrade <= 0.0 and config.w_tenpai_kong <= 0.0):
+        return 0.0
+    wall_scale = min(1.0, (wall_count - 12) / 28.0)
+    fixed_melds = len(melds)
+
+    # 1) 摸杠潜力: 暗刻待暗杠(立收现金+1根)权重 2.5, 已碰副露待补杠(+1根+补牌)权重 1.5
+    kong_outs = 0.0
+    for t in range(27):
+        if counts13[t] == 3 and unseen[t] > 0:
+            kong_outs += 2.5 * unseen[t]
+    for m in melds:
+        if m.kind is MeldKind.PONG:
+            m_idx = m.tiles[0].index
+            if unseen[m_idx] > 0:
+                kong_outs += 1.5 * unseen[m_idx]
+
+    # 2) 换听改良张数: 仅检查与现有手牌相邻(距离 <= 2)的非缺门未现张, 避免无意义全枚举
+    upgrade_outs = 0
+    if config.w_tenpai_upgrade > 0.0:
+        present = [i for i in range(27) if counts13[i] > 0]
+        cand_u: set[int] = set()
+        for p in present:
+            s_base = (p // 9) * 9
+            r = p - s_base
+            for dr in (-2, -1, 0, 1, 2):
+                nr = r + dr
+                if 0 <= nr < 9:
+                    u = s_base + nr
+                    if unseen[u] > 0 and u not in cur_wait_indices:
+                        cand_u.add(u)
+        for u in cand_u:
+            if void_idx is not None and u // 9 == void_idx:
+                continue
+            counts13[u] += 1
+            improved = False
+            for d in present:
+                if d == u:
+                    continue
+                counts13[d] -= 1
+                if fast_shanten_hand(counts13, fixed_melds, void_idx) == 0:
+                    ws = fast_useful_indices(counts13, fixed_melds, void_idx, 0)
+                    new_live = sum(unseen[w] for w in ws)
+                    if new_live >= cur_wait_live + 2:
+                        improved = True
+                        counts13[d] += 1
+                        break
+                counts13[d] += 1
+            counts13[u] -= 1
+            if improved:
+                upgrade_outs += unseen[u]
+
+    return wall_scale * (config.w_tenpai_upgrade * math.log1p(upgrade_outs) + config.w_tenpai_kong * kong_outs)
 
 
 def _pong_speedup_outs(
@@ -406,12 +518,15 @@ def score_discard_candidates_v2(
                 )
                 scored.append(item)
                 continue
-            # 缺门牌之间排序: 对手尚安全时先打外池未现/单张/边幺(趁早清); 若某缺门牌已高危则先打安全缺门
+            # 缺门牌之间排序(600副普通局 + 78副单行道实测标定):
+            # 1) 有明显点炮风险时安全优先;
+            # 2) 低危早巡优先清生张(table_seen=0), 把牌池已现熟张留到最后兜底(避免单行道后期喂大炮);
+            # 3) 同为生张时优先清中张(4/5/6 -> 3/7 -> 2/8 -> 1/9), 既降喂碰又避后期中张高危点炮;
+            # 4) 自己手握缺门对子优先先出1张(外池仅剩2张0%吃明杠, 且第2张立刻变熟张底牌)。
             table_seen = max(0, 4 - counts.unseen[idx] - hand.counts[idx])
             dup = hand.counts[idx]
             cent = _centrality_penalty(idx)
-            # 先打风险更低的, 风险低时按 (table_seen, dup, cent) 从小到大清牌
-            void_order_bonus = -0.08 * table_seen - 0.04 * dup - 0.02 * cent
+            void_order_bonus = -0.10 * table_seen + (0.04 if dup >= 2 else 0.0) + 0.025 * cent
             def_pen = -config.w_defense * 1.15 * exp_dealin_loss
             ev = 10.0 + void_order_bonus + def_pen
             item = dict(c)
@@ -420,7 +535,7 @@ def score_discard_candidates_v2(
                 ev_offense=round(10.0 + void_order_bonus, 3),
                 ev_defense=round(def_pen, 3),
                 ev_fan=0.0,
-                ev_reason="优先清缺门(低危早清生张边幺)" if exp_dealin_loss < 0.05 else "优先清更安全的缺门牌",
+                ev_reason="优先清缺门(低危早清生张中张/拆缺对)" if exp_dealin_loss < 0.05 else "优先清更安全的缺门牌",
             )
             scored.append(item)
             continue
@@ -453,18 +568,27 @@ def score_discard_candidates_v2(
         else:
             offense = -config.w_shanten * sh + config.w_live_log * math.log1p(live)
 
-        # 2) 大番潜力与牌形微调(含 1 向听听牌好型率与碰牌提速进张)
+        # 2) 大番潜力与牌形微调(含 1 向听听牌好型率、碰牌提速进张与 0 向听换听改良/摸杠潜力)
         base_counts[idx] -= 1
         fan_pot = 0.0
         good_wait_term = 0.0
         pong_term = 0.0
-        if sh >= 1:
+        if sh == 0:
+            if live > 0:
+                w_set = {tidx(from_label(w["tile"])) for w in (c.get("waits") or ())}
+                good_wait_term = _tenpai_upgrade_bonus(
+                    base_counts, hand.melds, void_idx, live, w_set, counts.unseen, state.wall_count, config
+                )
+            shape_term = 0.0
+        elif sh >= 1:
             if has_flush_pot and (idx // 9) != dom_suit and sh <= 2:
-                fan_pot += config.w_flush_pot
+                fan_pot += _flush_potential_bonus(base_counts, hand.melds, void_idx, sh, state, config)
             if init_7p <= 1 and len(hand.melds) == 0:
                 after_7p = _seven_pairs_shanten_after(base_counts, void_idx)
                 if after_7p <= init_7p:
-                    fan_pot += config.w_seven_pairs
+                    # 无根普通 5 对子七对价值有限(单钓+不可碰), 仅在已 6 对子或带根/清一色时给全额七对红利
+                    has_7p_root = any(cnt == 4 for i, cnt in enumerate(base_counts) if void_idx is None or i // 9 != void_idx)
+                    fan_pot += config.w_seven_pairs if (init_7p == 0 or has_7p_root or has_flush_pot) else 0.22
             elif len(hand.melds) >= 2 and sh <= 2:
                 # >=2 副露冲对对胡路线: 尽量不拆暗对/暗刻
                 if hand.counts[idx] == 1:
@@ -597,6 +721,10 @@ def evaluate_hand_ev_state(
                 tsumo_s = (w["tsumo_each"] * max(1, w["tsumo_payers"])) / base_score
                 raw_win_ev += rem * q_mult * (ron_w * ron_s + tsumo_w * tsumo_s)
             offense = config.w_tenpai_ev * math.log1p(raw_win_ev) + endgame_chajiao_value
+            w_set = {tidx(from_label(w["tile"])) for w in waits}
+            offense += _tenpai_upgrade_bonus(
+                list(hand.counts), hand.melds, void_idx, live, w_set, eff_unseen, state.wall_count, config
+            )
         else:
             offense = -config.w_dead_wait_pen + endgame_chajiao_value
         return offense, sh, live, max_fan
@@ -606,23 +734,14 @@ def evaluate_hand_ev_state(
 
     # 大番潜力(清一色 / 七对 / 对对胡 / 根)
     suit_totals = [sum(base_counts[s * 9 : (s + 1) * 9]) for s in range(3)]
-    meld_suits: set[int] = set()
     for m in hand.melds:
-        ms = SUITS.index(m.tiles[0].suit)
-        suit_totals[ms] += 3
-        meld_suits.add(ms)
+        suit_totals[SUITS.index(m.tiles[0].suit)] += 3
     dom_suit = max(range(3), key=lambda s: suit_totals[s])
-    fan_pot = 0.0
-    if (
-        suit_totals[dom_suit] >= 10
-        and dom_suit != void_idx
-        and sh <= 2
-        and (not meld_suits or meld_suits == {dom_suit})
-    ):
-        fan_pot += config.w_flush_pot
+    fan_pot = _flush_potential_bonus(base_counts, hand.melds, void_idx, sh, state, config)
     sp_sh = _seven_pairs_shanten_after(base_counts, void_idx) if fixed_melds == 0 else 99
     if fixed_melds == 0 and sp_sh <= 1:
-        fan_pot += config.w_seven_pairs
+        has_7p_root = any(cnt == 4 for i, cnt in enumerate(base_counts) if void_idx is None or i // 9 != void_idx)
+        fan_pot += config.w_seven_pairs if (sp_sh == 0 or has_7p_root or (suit_totals[dom_suit] >= 10 and dom_suit != void_idx)) else 0.22
     elif fixed_melds >= 2 and sh <= 2:
         pairs_kept = sum(1 for i, cnt in enumerate(base_counts) if cnt >= 2 and (void_idx is None or i // 9 != void_idx))
         if fixed_melds + pairs_kept >= 4:

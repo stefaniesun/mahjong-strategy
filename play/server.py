@@ -75,7 +75,11 @@ def create_app(session: GameSession) -> FastAPI:
     @app.post("/api/mark")
     def mark(payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
         with lock:
-            return session.mark(str(payload.get("note", "")).strip())
+            return session.mark(
+                str(payload.get("note", "")).strip(),
+                tag=str(payload.get("tag", "")).strip(),
+                expected_action=str(payload.get("expected_action", "")).strip(),
+            )
 
     return app
 
@@ -84,8 +88,8 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="四川麻将人机对局 + 打牌辅助器")
     parser.add_argument(
         "--ai",
-        default="s4",
-        help="对手类型: s4 / s5 / rule / rule_plus / assistant / zoo:<版本名> (如 zoo:v2_ev_base)",
+        default="top_mix",
+        help="对手类型: top_mix (默认: 每局随机分配 v5/v4/v3 头部强策略) / assistant / zoo:<版本名> / s4 / s5 / rule_plus / rule",
     )
     parser.add_argument("--checkpoint", type=Path, default=None)
     parser.add_argument("--port", type=int, default=8770)

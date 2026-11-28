@@ -23,10 +23,14 @@ from policies.decision_boundary import choose_policy_action
 
 from assistant.adapters.from_engine import build_state
 from assistant.analyzer import analyze
+from assistant.own_hand import fast_shanten_hand, fast_useful_indices
 from assistant.recorder import PublicRecorder
 from assistant.tiles import label, seat_name, suit_label
+from assistant.zoo import clear_all_zoo_caches
+from engine.tiles import SUITS
 
 HUMAN = 0
+FEEDBACK_INBOX = Path(__file__).resolve().parents[1] / "outputs" / "play" / "feedback_inbox.jsonl"
 KONG_NAMES = {GangKind.CONCEALED: "暗杠", GangKind.EXPOSED: "明杠", GangKind.ADDED: "补杠"}
 SUIT_BY_VALUE = {suit.value: suit for suit in Suit}
 
@@ -133,6 +137,9 @@ class GameSession:
             self.dealer = self.game.state.next_dealer
         self.hand_no += 1
         self.seed = seed if seed is not None else self.rng.randrange(1, 2**31)
+        if hasattr(self.ai, "assign_hand_seats"):
+            self.ai.assign_hand_seats(self.rng, self.seed)
+        clear_all_zoo_caches()
         self.game = Game(seed=self.seed, dealer=self.dealer)
         self.game.reset()
         self.recorder = PublicRecorder(self.game)
@@ -263,18 +270,57 @@ class GameSession:
         self._report_cache = (n, result)
         return result
 
-    def mark(self, note: str) -> dict[str, Any]:
+    def _ground_truth_snapshot(self) -> dict[str, Any]:
+        """仅写入后台反馈日志(绝不发给对局前端), 便于复盘时对照真实三家暗牌与真听口诊断辅助器盲区。"""
+        st = self.state
+        opps = []
+        for s in range(1, 4):
+            h = st.hands[s]
+            vs = st.void_suits[s]
+            vidx = SUITS.index(vs) if vs is not None else None
+            sh = fast_shanten_hand(h.counts, len(h.melds), vidx) if st.phase == "play" and not st.won[s] else None
+            waits = [label(w) for w in fast_useful_indices(h.counts, len(h.melds), vidx, 0)] if sh == 0 else []
+            opps.append(
+                {
+                    "seat": s,
+                    "name": seat_name(s, HUMAN),
+                    "ai_model": self.ai.seat_label(s) if hasattr(self.ai, "seat_label") else self.ai_name,
+                    "void": vs.value if vs is not None else None,
+                    "won": bool(st.won[s]),
+                    "shanten": sh,
+                    "waits": waits,
+                    "hand": [tile_to_str(t) for t in sorted(h.tiles(), key=lambda x: x.index)],
+                    "score": int(st.scores[s]),
+                }
+            )
+        return {"wall_count": len(st.wall), "opponents": opps}
+
+    def mark(self, note: str, *, tag: str = "", expected_action: str = "") -> dict[str, Any]:
+        seat_models = self.ai.seat_summary() if hasattr(self.ai, "seat_summary") else {1: self.ai_name, 2: self.ai_name, 3: self.ai_name}
         entry = {
             "time": time.strftime("%Y-%m-%d %H:%M:%S"),
             "hand_no": self.hand_no,
+            "seed": self.seed,
+            "step": len(self.log.steps),
+            "phase": self.state.phase,
+            "wall": len(self.state.wall),
+            "tag": tag,
+            "expected_action": expected_action,
             "note": note,
+            "seat_models": seat_models,
             "replay": self.log.to_dict(),
             "view": self.view(include_report=False),
             "report": self.report(),
+            "ground_truth": self._ground_truth_snapshot(),
         }
+        line = json.dumps(entry, ensure_ascii=False) + "\n"
         with (self.log_dir / "marks.jsonl").open("a", encoding="utf-8") as fh:
-            fh.write(json.dumps(entry, ensure_ascii=False) + "\n")
-        return {"ok": True, "count": sum(1 for _ in (self.log_dir / "marks.jsonl").open(encoding="utf-8"))}
+            fh.write(line)
+        FEEDBACK_INBOX.parent.mkdir(parents=True, exist_ok=True)
+        with FEEDBACK_INBOX.open("a", encoding="utf-8") as fh:
+            fh.write(line)
+        inbox_count = sum(1 for _ in FEEDBACK_INBOX.open(encoding="utf-8"))
+        return {"ok": True, "count": sum(1 for _ in (self.log_dir / "marks.jsonl").open(encoding="utf-8")), "inbox_count": inbox_count}
 
     # ---- 发给前端的视图(只含你能看到的信息) ----
 
@@ -283,7 +329,17 @@ class GameSession:
         finished = state.finished
         actor = next_actor(self.game)
         legal = self.human_legal()
-        seats = [self._seat_view(seat, finished) for seat in range(4)]
+        report_data = self.report() if (include_report and (len(legal) > 1 or state.phase == "play")) else None
+        inferred_by_seat: dict[int, list[str]] = {}
+        if not finished and state.phase == "play" and report_data is not None:
+            for w_item in report_data.get("winners") or ():
+                s = w_item.get("seat")
+                codes: list[str] = []
+                for ct in w_item.get("certain_tiles") or ():
+                    codes.extend([ct["code"]] * int(ct.get("count", 1)))
+                if codes:
+                    inferred_by_seat[s] = codes
+        seats = [self._seat_view(seat, finished, inferred_by_seat.get(seat)) for seat in range(4)]
 
         hand = [tile_to_str(t) for t in state.hands[HUMAN].tiles()]
         drawn = None
@@ -352,10 +408,10 @@ class GameSession:
             "history": self.history[-20:],
         }
         if include_report:
-            result["report"] = self.report() if decision is not None or state.phase == "play" else None
+            result["report"] = report_data
         return result
 
-    def _seat_view(self, seat: int, finished: bool) -> dict[str, Any]:
+    def _seat_view(self, seat: int, finished: bool, inferred_certain: list[str] | None = None) -> dict[str, Any]:
         state = self.state
         hand = state.hands[seat]
         record = state.win_records[seat]
@@ -373,27 +429,61 @@ class GameSession:
                 "order": state.win_order.index(seat) + 1,
             }
         known_tiles: list[str] = []
-        if seat != HUMAN and state.phase != "swap_three" and state.swap_choices[HUMAN] is not None:
+        if not finished and seat != HUMAN and state.phase != "swap_three" and state.swap_choices[HUMAN] is not None:
             giver_to = (HUMAN - state.swap_direction) % 4
             if seat == giver_to:
-                known_tiles = [tile_to_str(t) for t in state.swap_choices[HUMAN]]
-        hidden = hand.size - len(known_tiles)
+                # 严格扣除对方已打出、已碰/杠从手牌拿出、以及被抢杠胡的牌(与 assistant.known_holdings.swap_floors 完全一致)
+                rem_known: dict[str, int] = {}
+                for t in state.swap_choices[HUMAN]:
+                    code = tile_to_str(t)
+                    rem_known[code] = rem_known.get(code, 0) + 1
+                for code in self.recorder.discards[seat]:
+                    if rem_known.get(code, 0) > 0:
+                        rem_known[code] -= 1
+                for meld in hand.melds:
+                    code = tile_to_str(meld.tiles[0])
+                    if rem_known.get(code, 0) > 0:
+                        used = 2 if meld.kind is MeldKind.PONG else (4 if not meld.exposed else 3)
+                        rem_known[code] = max(0, rem_known[code] - used)
+                for w in self.recorder.wins:
+                    if w.robbing_kong and w.from_seat == seat and w.tile is not None:
+                        if rem_known.get(w.tile, 0) > 0:
+                            rem_known[w.tile] -= 1
+                for t in state.swap_choices[HUMAN]:
+                    code = tile_to_str(t)
+                    if rem_known.get(code, 0) > 0:
+                        known_tiles.append(code)
+                        rem_known[code] -= 1
+        inferred_tiles: list[str] = []
+        if not finished and seat != HUMAN and inferred_certain:
+            # 扣除已展示在 known_tiles(换牌已知)里的同牌，避免重复展示
+            known_counts: dict[str, int] = {}
+            for code in known_tiles:
+                known_counts[code] = known_counts.get(code, 0) + 1
+            for code in inferred_certain:
+                if known_counts.get(code, 0) > 0:
+                    known_counts[code] -= 1
+                else:
+                    inferred_tiles.append(code)
+        hidden = max(0, hand.size - len(known_tiles) - len(inferred_tiles))
         if win is not None and win["tile"] is not None and record.kind == "self_draw":
-            hidden -= 1  # 自摸的那张亮在外面
+            hidden = max(0, hidden - 1)  # 自摸的那张亮在外面
         void = state.void_suits[seat]
         show_void = seat == HUMAN or state.phase in ("play", "finished")
         return {
             "seat": seat,
             "name": seat_name(seat, HUMAN),
             "is_ai": seat != HUMAN,
+            "ai_tag": self.ai.seat_label(seat) if (finished and seat != HUMAN and hasattr(self.ai, "seat_label")) else None,
             "void": void.value if void is not None and show_void else None,
             "hidden": hidden,
             "known_tiles": known_tiles,
+            "inferred_tiles": inferred_tiles,
             "melds": melds,
             "river": [tile_to_str(t) for t in state.rivers[seat]],
             "won": state.won[seat],
             "win": win,
-            "score": state.scores[seat],
-            "total": self.totals[seat] + (0 if self.settled else state.scores[seat]),
+            "score": state.scores[seat] if finished else 0,
+            "total": (self.totals[seat] + (0 if self.settled else state.scores[seat])) if finished else self.totals[seat],
             "hand": [tile_to_str(t) for t in hand.tiles()] if reveal else None,
         }

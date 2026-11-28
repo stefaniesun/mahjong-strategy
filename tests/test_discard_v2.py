@@ -136,3 +136,22 @@ def test_v5_fast_tenpai_fan_mult_distinguishes_big_hands_from_pinghu():
     # 普通 0 番平胡 (1.0x)
     h_plain = Hand.from_tiles([parse_tile(t) for t in "1T 2T 3T 4T 5T 6T 2B 3B 4B 6B 7B 9B 9B".split()])
     assert _fast_tenpai_fan_mult(list(h_plain.counts), h_plain.melds, [parse_tile("5B").index, parse_tile("8B").index]) == 1.0
+
+
+def test_discard_v2_void_clear_order_prefers_unseen_mid_and_pair_over_edge_and_seen():
+    # 1) 全是生张单张 (1B/5B/9B): 低危早巡应先打 5筒(中张), 把 1筒/9筒 留后
+    own1 = "1W 7W 7W 8W 8W 9W 2T 2T 6T 6T 7T 1B 5B 9B".split()
+    st1 = make_state(own1, voids={0: "B", 1: "T", 2: "B", 3: "T"})
+    rep1 = analyze(st1)
+    assert rep1.own_info["discard_v2_pick"] == "5筒"
+
+    # 2) 若 5筒 牌池已现 1 张而 9筒 仍是生张: 低危早巡应先清生张 9筒, 把熟张 5筒 留后兜底
+    st2 = make_state(own1, voids={0: "B", 1: "T", 2: "B", 3: "T"}, rivers={2: ["5B"]})
+    rep2 = analyze(st2)
+    assert rep2.own_info["discard_v2_pick"] in ("1筒", "9筒")
+
+    # 3) 自己握生张对子 5B 5B 与生张单张 5B/4B: 对子 5B 优先先出1张
+    own3 = "1W 7W 7W 8W 8W 9W 2T 2T 6T 6T 7T 4B 5B 5B".split()
+    st3 = make_state(own3, voids={0: "B", 1: "T", 2: "B", 3: "T"})
+    rep3 = analyze(st3)
+    assert rep3.own_info["discard_v2_pick"] == "5筒"

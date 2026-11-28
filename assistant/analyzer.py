@@ -9,7 +9,7 @@ import numpy as np
 
 from assistant.alerts import build_alerts
 from assistant.counting import TileCounts, breakdown_text, compute_counts, conservation_errors, seen_breakdown
-from assistant.danger import analyze_danger, random_pool
+from assistant.danger import analyze_danger, estimate_wall_expected, random_pool
 from assistant.known_holdings import swap_floors
 from assistant.opening import analyze_opening, swap_tracking
 from assistant.opponent_read import OpponentRead, read_all_opponents
@@ -38,6 +38,7 @@ class Report:
     own_info: dict | None = None
     opening_info: dict | None = None
     remaining_rows: list[dict] = field(default_factory=list)
+    suit_inference: list[dict] = field(default_factory=list)
     sections: dict[str, list[Finding]] = field(default_factory=dict)
     winner_items: list[dict] = field(default_factory=list)
     elapsed_ms: float = 0.0
@@ -71,6 +72,7 @@ class Report:
             "opponent_reads": self.opponent_reads,
             "winners": self.winner_items,
             "remaining": self.remaining_rows,
+            "suit_inference": self.suit_inference,
             "flags": self.flags,
             "elapsed_ms": round(self.elapsed_ms, 2),
         }
@@ -81,22 +83,113 @@ def _hand_text(vec) -> str:
 
 
 def _remaining_section(
-    state: AssistantState, counts: TileCounts, winners: list[WinnerInference], floors: dict | None = None
-) -> tuple[list[dict], list[Finding]]:
+    state: AssistantState,
+    counts: TileCounts,
+    winners: list[WinnerInference],
+    floors: dict | None = None,
+) -> tuple[list[dict], list[dict], list[Finding]]:
+    from assistant.tiles import SUIT_ORDER, suit_label
+
     breakdown = seen_breakdown(state)
     pool, pool_total = random_pool(counts, winners, floors)
+    wall_exp, winner_exp, active_opp_exp = estimate_wall_expected(state, counts, winners, floors)
+    certain_locked = [sum(inf.certain[t] for inf in winners) for t in range(27)]
     rows = []
     for t in range(27):
+        eff_unseen = max(0, counts.unseen[t] - certain_locked[t])
         rows.append(
             {
                 "tile": label(t),
                 "seen": counts.seen[t],
                 "unseen": counts.unseen[t],
-                "exhausted": counts.unseen[t] == 0,
+                "certain_locked": certain_locked[t],
+                "effective_unseen": eff_unseen,
+                "exhausted": eff_unseen == 0,
                 "seen_from": breakdown_text(breakdown[t]),
-                "wall_expected": round(pool[t] * counts.wall / pool_total, 2) if pool_total > 0 else 0.0,
+                "wall_expected": round(wall_exp[t], 2),
+                "winner_expected": round(winner_exp[t], 2),
+                "active_opp_expected": round(active_opp_exp[t], 2),
             }
         )
+
+    # 按花色汇总残局推理(定缺集中度 + 已胡者该花色高概率持牌 + 墙内占比 + 1~9去向拆分)
+    suit_summary: list[dict] = []
+    for s_idx, s_code in enumerate(SUIT_ORDER):
+        base = s_idx * 9
+        opp_void_seats = []
+        for p in state.players:
+            if p.seat == state.perspective:
+                continue
+            if p.void_suit == s_code:
+                nm = seat_name(p.seat, state.perspective)
+                opp_void_seats.append(f"{nm}(已胡)" if p.won else nm)
+        s_unseen = sum(counts.unseen[base + r] for r in range(9))
+        s_wall = sum(wall_exp[base + r] for r in range(9))
+        s_win = sum(winner_exp[base + r] for r in range(9))
+        s_opp = sum(active_opp_exp[base + r] for r in range(9))
+        winner_clues: list[dict] = []
+        for inf in winners:
+            p = state.players[inf.seat]
+            if p.void_suit == s_code:
+                continue
+            s_inf_exp = sum(inf.expected[base + r] for r in range(9))
+            rec = state.win_of(inf.seat)
+            how = "自摸" if rec.self_draw else ("抢杠胡" if rec.robbing_kong else "点炮胡")
+            hot = []
+            certain_in_suit = [
+                {"tile": label(base + r), "count": int(inf.certain[base + r])}
+                for r in range(9)
+                if inf.certain[base + r] > 0
+            ]
+            if inf.hold_prob is not None:
+                cands = sorted(
+                    ((base + r, inf.hold_prob[base + r], inf.expected[base + r]) for r in range(9) if inf.hold_prob[base + r] >= 0.25 and inf.certain[base + r] == 0),
+                    key=lambda x: -x[1],
+                )[:4]
+                hot = [{"tile": label(t), "prob": round(pr, 3), "expected": round(ex, 2)} for t, pr, ex in cands]
+            if s_inf_exp >= 0.35 or hot or certain_in_suit:
+                winner_clues.append(
+                    {
+                        "seat": inf.seat,
+                        "name": seat_name(inf.seat, state.perspective),
+                        "how": how,
+                        "tile": label(rec.tile) if rec.tile else "未知",
+                        "candidate_count": int(len(inf.candidates)) if inf.status == STATUS_COMPLETE else None,
+                        "suit_expected": round(s_inf_exp, 2),
+                        "certain_tiles": certain_in_suit,
+                        "hot_tiles": hot,
+                    }
+                )
+        tiles_detail = [
+            {
+                "rank": r + 1,
+                "tile": label(base + r),
+                "unseen": counts.unseen[base + r],
+                "certain_locked": certain_locked[base + r],
+                "effective_unseen": max(0, counts.unseen[base + r] - certain_locked[base + r]),
+                "wall_expected": round(wall_exp[base + r], 2),
+                "winner_expected": round(winner_exp[base + r], 2),
+                "active_opp_expected": round(active_opp_exp[base + r], 2),
+            }
+            for r in range(9)
+        ]
+        suit_summary.append(
+            {
+                "suit": s_code,
+                "label": suit_label(s_code),
+                "is_my_void": state.me.void_suit == s_code,
+                "opp_void_count": len(opp_void_seats),
+                "void_seats": opp_void_seats,
+                "unseen": s_unseen,
+                "wall_expected": round(s_wall, 2),
+                "wall_share": round(s_wall / counts.wall, 3) if counts.wall > 0 else 0.0,
+                "winner_expected": round(s_win, 2),
+                "active_opp_expected": round(s_opp, 2),
+                "winner_clues": winner_clues,
+                "tiles": tiles_detail,
+            }
+        )
+
     findings: list[Finding] = []
     exhausted = counts.exhausted
     if exhausted:
@@ -122,15 +215,17 @@ def _remaining_section(
                 "remaining",
                 "每种牌在牌墙里的期望张数见余牌表",
                 [
-                    f"在牌墙和在场对手暗手牌之间随机分布的牌共约 {pool_total:.0f} 张,其中牌墙 {counts.wall} 张",
-                    "已胡者手里的部分按反推结果扣除;你换给别家、还没出手的牌一定在他手里,也已扣除",
+                    f"在牌墙和在场对手暗手牌之间分布的牌共约 {pool_total:.0f} 张,其中牌墙 {counts.wall} 张",
+                    "已结合已胡者反推、换牌底牌与在场对手定缺清门进度校正牌墙占比",
                 ],
             )
         )
-    return rows, findings
+    return rows, suit_summary, findings
 
 
 def _winner_section(state: AssistantState, winners: list[WinnerInference]) -> tuple[list[dict], list[Finding]]:
+    from assistant.tiles import SUIT_ORDER
+
     items: list[dict] = []
     findings: list[Finding] = []
     for inference in winners:
@@ -139,6 +234,7 @@ def _winner_section(state: AssistantState, winners: list[WinnerInference]) -> tu
         view = state.players[inference.seat]
         how = "自摸" if record.self_draw else ("抢杠胡" if record.robbing_kong else f"点炮(放炮:{seat_name(record.from_seat, state.perspective)})")
         tile_text = label(record.tile) if record.tile else "未知"
+        sure = [(t, c) for t, c in enumerate(inference.certain) if c]
         item: dict[str, Any] = {
             "seat": inference.seat,
             "name": who,
@@ -147,6 +243,9 @@ def _winner_section(state: AssistantState, winners: list[WinnerInference]) -> tu
             "hidden_count": inference.hidden_count,
             "status": inference.status,
             "joint": inference.joint,
+            "certain_tiles": [
+                {"tile": label(t), "code": f"{(t % 9) + 1}{SUIT_ORDER[t // 9]}", "count": int(c)} for t, c in sure
+            ],
         }
         findings.append(
             certain(
@@ -155,6 +254,14 @@ def _winner_section(state: AssistantState, winners: list[WinnerInference]) -> tu
                 [f"副露 {len(view.melds)} 组", _void_text(view.void_suit)],
             )
         )
+        if sure:
+            findings.append(
+                certain(
+                    "winners",
+                    f"{who}手里一定有:{'、'.join(label(t) + (f'×{c}' if c > 1 else '') for t, c in sure)}",
+                    ["所有合法胡牌组合均必然包含这些牌(含断张顺子必含推理)", "全局有效余牌与其他对手持有上限已同步扣除"],
+                )
+            )
         if inference.status == STATUS_COMPLETE:
             order = [int(i) for i in np.argsort(-inference.weights, kind="stable")]
             item["candidates"] = [
@@ -169,15 +276,6 @@ def _winner_section(state: AssistantState, winners: list[WinnerInference]) -> tu
                     + (["已和另一名胡牌者做联合约束(两人合计用量不超过未现张数)"] if inference.joint else []),
                 )
             )
-            sure = [(t, c) for t, c in enumerate(inference.certain) if c]
-            if sure:
-                findings.append(
-                    certain(
-                        "winners",
-                        f"{who}手里一定有:{'、'.join(label(t) + (f'×{c}' if c > 1 else '') for t, c in sure)}",
-                        ["所有可能组合里都有这些牌", "其他对手对这些牌的可持有上限已相应扣除"],
-                    )
-                )
             hold = sorted(
                 ((t, p) for t, p in enumerate(inference.hold_prob or ()) if 0.05 <= p < 0.999),
                 key=lambda x: -x[1],
@@ -242,7 +340,7 @@ def analyze(state: AssistantState) -> Report:
         report.winners = winners
         report.opponent_reads = [r.to_dict() for r in opp_reads.values()]
         report.winner_items, sections["winners"] = _winner_section(state, winners)
-        report.remaining_rows, sections["remaining"] = _remaining_section(state, counts, winners, floors)
+        report.remaining_rows, report.suit_inference, sections["remaining"] = _remaining_section(state, counts, winners, floors)
         if not state.me.won and state.own_hand:
             report.danger_rows, danger_findings = analyze_danger(state, counts, winners, floors, opponent_reads=opp_reads)
             # 在安全度面板顶部置入对手听牌进度与大牌型预警摘要

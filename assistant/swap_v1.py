@@ -135,9 +135,9 @@ def fast_shanten_two_suits(c_a: tuple[int, ...], c_b: tuple[int, ...]) -> int:
         if cand < best:
             best = cand
 
-    pairs = pa.pairs + pb.pairs
-    unique = pa.unique + pb.unique
-    sp = 6 - pairs + (7 - unique if unique < 7 else 0)
+    sp_pairs = pa.pairs + pa.quads + pb.pairs + pb.quads
+    sp_slots = pa.unique + pa.triplets + pb.unique + pb.triplets
+    sp = 6 - sp_pairs + (7 - sp_slots if sp_slots < 7 else 0)
     if sp < best:
         best = sp
     return best
@@ -166,9 +166,9 @@ def fast_shanten_counts(
             cand = 7 - 2 * mp - tp
             if cand < best:
                 best = cand
-    pairs = p0.pairs + p1.pairs + p2.pairs
-    unique = p0.unique + p1.unique + p2.unique
-    sp = 6 - pairs + (7 - unique if unique < 7 else 0)
+    sp_pairs = p0.pairs + p0.quads + p1.pairs + p1.quads + p2.pairs + p2.quads
+    sp_slots = p0.unique + p0.triplets + p1.unique + p1.triplets + p2.unique + p2.triplets
+    sp = 6 - sp_pairs + (7 - sp_slots if sp_slots < 7 else 0)
     return sp if sp < best else best
 
 

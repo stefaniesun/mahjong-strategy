@@ -11,12 +11,36 @@ from assistant.swap_v1 import (
     split_suits,
 )
 from engine.hand import Hand
-from engine.tiles import SUITS, Suit, full_wall, parse_tile, tile_to_str
-from state.hand_analysis import shanten, useful_tiles
+from engine.tiles import SUITS, Suit, Tile, full_wall, parse_tile, tile_to_str
+from state.hand_analysis import _effective_counts, _standard_shanten
+
+
+def _sichuan_shanten_ref(hand: Hand, void_suit: Suit | None) -> int:
+    counts = tuple(_effective_counts(hand, void_suit))
+    std = _standard_shanten(counts, len(hand.melds))
+    if hand.melds:
+        return std
+    sp_pairs = sum(c // 2 for c in counts)
+    sp_slots = sum((c + 1) // 2 for c in counts)
+    return min(std, 6 - sp_pairs + max(0, 7 - sp_slots))
 
 
 def _live_ref(hand: Hand, void_suit: Suit) -> int:
-    return sum(max(0, 4 - hand.count(parse_tile(t))) for t in useful_tiles(hand, void_suit=void_suit))
+    cur = _sichuan_shanten_ref(hand, void_suit)
+    live = 0
+    for s in SUITS:
+        if s is void_suit:
+            continue
+        for r in range(1, 10):
+            t = Tile(s, r)
+            cnt = hand.count(t)
+            if cnt >= 4:
+                continue
+            tr = Hand(counts=list(hand.counts), melds=list(hand.melds))
+            tr.add(t)
+            if _sichuan_shanten_ref(tr, void_suit) < cur:
+                live += 4 - cnt
+    return live
 
 
 def test_fast_shanten_and_live_match_engine_exactly():
@@ -30,10 +54,10 @@ def test_fast_shanten_and_live_match_engine_exactly():
         for t in pool[:size]:
             hand.add(t)
         s3 = split_suits(hand.counts)
-        assert fast_shanten_counts(s3, None) == shanten(hand, None)
+        assert fast_shanten_counts(s3, None) == _sichuan_shanten_ref(hand, None)
         for idx, suit in enumerate(SUITS):
             s_fast = fast_shanten_counts(s3, idx)
-            s_ref = shanten(hand, suit)
+            s_ref = _sichuan_shanten_ref(hand, suit)
             assert s_fast == s_ref
             other = ((1, 2), (0, 2), (0, 1))[idx]
             live_fast = fast_live_useful_two_suits(s3[other[0]], s3[other[1]], s_fast)

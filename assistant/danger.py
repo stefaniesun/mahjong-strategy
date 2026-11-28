@@ -93,6 +93,123 @@ def random_pool(counts: TileCounts, winners: list[WinnerInference], floors: Floo
     return pool, sum(pool)
 
 
+def estimate_wall_expected(
+    state: AssistantState,
+    counts: TileCounts,
+    winners: list[WinnerInference],
+    floors: Floors | None = None,
+) -> tuple[list[float], list[float], list[float]]:
+    """结合已胡者反推、换牌已知底牌与在场对手定缺清门进度，用比例迭代(IPF)精确估算 27 种牌的去向。
+
+    返回 (wall_exp, winner_exp, active_opp_exp)，三者均为长度 27 的列表，满足张数守恒：
+    - wall_exp[t] + winner_exp[t] + active_opp_exp[t] ≈ counts.unseen[t]
+    - sum(wall_exp) ≈ counts.wall
+    当有在场对手定缺某门且已打出非缺门牌（大概率已清完缺门）时，该门未现牌会更真实地汇聚到牌墙中。
+    """
+    winner_exp = [0.0] * 27
+    for inf in winners:
+        for t in range(27):
+            winner_exp[t] += inf.expected[t]
+
+    winner_seats = {inf.seat for inf in winners}
+    locked_floor = [0.0] * 27
+    opp_floor_sum: dict[int, int] = {}
+    for seat, fl in (floors or {}).items():
+        if seat not in winner_seats:
+            s_fl = 0
+            for t in range(27):
+                if fl[t]:
+                    locked_floor[t] += fl[t]
+                    s_fl += fl[t]
+            opp_floor_sum[seat] = s_fl
+
+    for t in range(27):
+        cap_w = max(0.0, float(counts.unseen[t]) - locked_floor[t])
+        if winner_exp[t] > cap_w:
+            winner_exp[t] = cap_w
+
+    pool = [max(0.0, counts.unseen[t] - winner_exp[t] - locked_floor[t]) for t in range(27)]
+    pool_total = sum(pool)
+    if pool_total <= 1e-9 or counts.wall <= 0:
+        wall_exp = [0.0] * 27
+        active_opp_exp = [max(0.0, counts.unseen[t] - winner_exp[t]) for t in range(27)]
+        return wall_exp, winner_exp, active_opp_exp
+
+    # 收集牌墙 + 各在场对手(扣除已知底牌后)的未知张数与定缺先验权重
+    row_targets: list[float] = [float(counts.wall)]
+    row_priors: list[list[float]] = [[1.0] * 27]
+    has_void_bias = False
+
+    for p in state.active_opponents():
+        free_h = max(0, counts.hidden.get(p.seat, 0) - opp_floor_sum.get(p.seat, 0))
+        if free_h <= 0:
+            continue
+        vs = p.void_suit
+        alpha_void = 1.0
+        if vs is not None and state.phase == "play":
+            non_void_disc = sum(1 for d in p.discards if d[-1] != vs)
+            if non_void_disc >= 2:
+                alpha_void = 0.02
+            elif non_void_disc == 1:
+                alpha_void = 0.08
+            elif len(p.discards) >= 1:
+                alpha_void = 0.35
+        if alpha_void < 1.0:
+            has_void_bias = True
+        row_targets.append(float(free_h))
+        row_priors.append([alpha_void if (vs is not None and suit_of(t) == vs) else 1.0 for t in range(27)])
+
+    if len(row_targets) == 1:
+        # 场上已无其他在场对手的自由暗牌 -> 剩余 pool 全在牌墙
+        return list(pool), winner_exp, list(locked_floor)
+
+    if not has_void_bias:
+        ratio = counts.wall / pool_total
+        wall_exp = [pool[t] * ratio for t in range(27)]
+        active_opp_exp = [locked_floor[t] + pool[t] * (1.0 - ratio) for t in range(27)]
+        return wall_exp, winner_exp, active_opp_exp
+
+    # 归一化行目标总和对齐 pool_total(防浮点微小误差)
+    t_sum = sum(row_targets)
+    if t_sum > 1e-9 and abs(t_sum - pool_total) > 1e-6:
+        scale = pool_total / t_sum
+        row_targets = [x * scale for x in row_targets]
+
+    n_rows = len(row_targets)
+    mat = [[row_priors[r][t] * pool[t] for t in range(27)] for r in range(n_rows)]
+    for _ in range(30):
+        # 行缩放: 对齐牌墙与各在场对手未知张数
+        max_err = 0.0
+        for r in range(n_rows):
+            rs = sum(mat[r])
+            err = abs(rs - row_targets[r])
+            if err > max_err:
+                max_err = err
+            if rs > 1e-12:
+                fac = row_targets[r] / rs
+                row = mat[r]
+                for t in range(27):
+                    row[t] *= fac
+        # 列缩放: 对齐每种牌的 pool[t]
+        for t in range(27):
+            pt = pool[t]
+            if pt <= 1e-12:
+                for r in range(n_rows):
+                    mat[r][t] = 0.0
+                continue
+            cs = sum(mat[r][t] for r in range(n_rows))
+            if cs > 1e-12:
+                fac = pt / cs
+                for r in range(n_rows):
+                    mat[r][t] *= fac
+        if max_err < 1e-4:
+            break
+
+    wall_exp = mat[0]
+    active_opp_exp = [locked_floor[t] + sum(mat[r][t] for r in range(1, n_rows)) for t in range(27)]
+    return wall_exp, winner_exp, active_opp_exp
+
+
 def analyze_danger(
     state: AssistantState,
     counts: TileCounts,

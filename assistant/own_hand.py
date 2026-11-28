@@ -8,7 +8,7 @@ from engine.tiles import Suit, Tile, parse_tile
 from engine.ting_check import ting_tiles
 
 from assistant.counting import TileCounts
-from assistant.danger import random_pool
+from assistant.danger import estimate_wall_expected, random_pool
 from assistant.opponent_read import OpponentRead
 from assistant.report import Finding, certain, counted, probable
 from assistant.state import AssistantState
@@ -24,7 +24,7 @@ ASSUMPTION_DISCARD_V2 = "按 240 局配对实测校准的中盘攻防与残局�
 
 
 def fast_shanten_hand(counts: list[int] | tuple[int, ...], fixed_melds: int, void_idx: int | None) -> int:
-    """与 state.hand_analysis.shanten 100% 数学等价的高速向听计算(复用单门缓存,提速 15x+)。"""
+    """四川血战精确高速向听计算(复用单门缓存,提速 15x+,完整支持四张同牌=2对的龙七对)。"""
     c0 = ZERO_SUIT if void_idx == 0 else tuple(counts[0:9])
     c1 = ZERO_SUIT if void_idx == 1 else tuple(counts[9:18])
     c2 = ZERO_SUIT if void_idx == 2 else tuple(counts[18:27])
@@ -67,9 +67,10 @@ def fast_shanten_hand(counts: list[int] | tuple[int, ...], fixed_melds: int, voi
             best = cand
 
     if fixed_melds == 0:
-        pairs = p0.pairs + p1.pairs + p2.pairs
-        unique = p0.unique + p1.unique + p2.unique
-        sp = 6 - pairs + (7 - unique if unique < 7 else 0)
+        # 四川血战允许 4 张同牌按 2 对计入龙七对: sp_pairs = sum(c // 2), sp_slots = sum((c + 1) // 2)
+        sp_pairs = p0.pairs + p0.quads + p1.pairs + p1.quads + p2.pairs + p2.quads
+        sp_slots = p0.unique + p0.triplets + p1.unique + p1.triplets + p2.unique + p2.triplets
+        sp = 6 - sp_pairs + (7 - sp_slots if sp_slots < 7 else 0)
         if sp < best:
             best = sp
     return best
@@ -81,7 +82,7 @@ def fast_useful_indices(
     void_idx: int | None,
     current_sh: int | None = None,
 ) -> list[int]:
-    """与 state.hand_analysis.useful_tiles 100% 数学等价的高速有效进张枚举(零 Hand 拷贝)。"""
+    """四川血战精确高速有效进张枚举(零 Hand 拷贝,完整支持龙七对,0向听时与 engine.ting_check.ting_tiles 100%一致)。"""
     cur = fast_shanten_hand(counts, fixed_melds, void_idx) if current_sh is None else current_sh
     s0 = ZERO_SUIT if void_idx == 0 else tuple(counts[0:9])
     s1 = ZERO_SUIT if void_idx == 1 else tuple(counts[9:18])
@@ -102,8 +103,8 @@ def fast_useful_indices(
 
         other_m = fixed_melds + pa.m0 + pb.m0
         other_t = pa.t0 + pb.t0
-        other_pairs = pa.pairs + pb.pairs
-        other_unique = pa.unique + pb.unique
+        other_sp_pairs = pa.pairs + pa.quads + pb.pairs + pb.quads
+        other_sp_slots = pa.unique + pa.triplets + pb.unique + pb.triplets
         base_idx = si * 9
 
         # 预合并另外两门的 pair_blocks 以减少内层重复计算
@@ -153,9 +154,9 @@ def fast_useful_indices(
                 continue
 
             if fixed_melds == 0:
-                pairs = other_pairs + pn.pairs
-                unique = other_unique + pn.unique
-                if 6 - pairs + (7 - unique if unique < 7 else 0) < cur:
+                sp_pairs = other_sp_pairs + pn.pairs + pn.quads
+                sp_slots = other_sp_slots + pn.unique + pn.triplets
+                if 6 - sp_pairs + (7 - sp_slots if sp_slots < 7 else 0) < cur:
                     useful.append(base_idx + r)
     return useful
 
@@ -222,6 +223,8 @@ def wait_table(
     state: AssistantState,
     eff_unseen: tuple[int, ...] | None = None,
     wall_exp: list[float] | None = None,
+    winner_exp: list[float] | None = None,
+    active_opp_exp: list[float] | None = None,
 ) -> list[dict]:
     rows = []
     payers = len(state.active_opponents())
@@ -243,6 +246,10 @@ def wait_table(
         }
         if wall_exp is not None:
             row["wall_expected"] = round(wall_exp[tile.index], 2)
+        if winner_exp is not None:
+            row["winner_expected"] = round(winner_exp[tile.index], 2)
+        if active_opp_exp is not None:
+            row["active_opp_expected"] = round(active_opp_exp[tile.index], 2)
         rows.append(row)
     return rows
 
@@ -281,7 +288,7 @@ def analyze_own_hand(
     eff_unseen = _effective_unseen(counts, winners)
     winners_locked_any = eff_unseen != counts.unseen
     pool, pool_total = random_pool(counts, winners or [], floors)
-    wall_exp = [pool[t] * counts.wall / pool_total if pool_total > 0 else 0.0 for t in range(27)]
+    wall_exp, winner_exp, active_opp_exp = estimate_wall_expected(state, counts, winners or [], floors)
     risk_by_tile = {row["tile"]: row for row in (danger_rows or [])}
     info: dict = {"concealed": hand.size, "melds": fixed_melds, "my_draws_left": draws, "total_unseen": counts.total_unseen}
 
@@ -295,7 +302,7 @@ def analyze_own_hand(
             useful, live = _useful_rows_from_counts(base_counts, fixed_melds, void_idx, counts, eff_unseen, after)
             if after == 0:
                 trial = Hand(counts=list(base_counts), melds=list(hand.melds))
-                waits = wait_table(trial, void, counts, state, eff_unseen, wall_exp)
+                waits = wait_table(trial, void, counts, state, eff_unseen, wall_exp, winner_exp, active_opp_exp)
             else:
                 waits = []
             base_counts[index] += 1
@@ -469,7 +476,7 @@ def analyze_own_hand(
     if dead and current > 0:
         findings.append(certain("own_hand", f"这些进张已绝,摸不到了:{labels_text(dead)}", ["四张都已现身或确定扣在已胡者暗手里"]))
     if current == 0:
-        waits = wait_table(hand, void, counts, state, eff_unseen, wall_exp)
+        waits = wait_table(hand, void, counts, state, eff_unseen, wall_exp, winner_exp, active_opp_exp)
         info["waits"] = waits
         if waits and all(w["remaining"] == 0 for w in waits):
             findings.append(certain("own_hand", "死听:听的牌已全部现身", [f"听 {labels_text([w['tile'] for w in waits])},均已四张现身或确定扣在已胡者暗手里"]))

@@ -257,6 +257,42 @@ def _proportional_expected(
     return tuple(float(floor[t]) + free * count / total for t, count in enumerate(allowed))
 
 
+def _deduce_certain_from_win_tile(
+    win_index: int,
+    caps: tuple[int, ...],
+    void_suit: str | None,
+    own_floor: np.ndarray,
+) -> np.ndarray:
+    """确定档(Tier 1)数学推导: 当胡牌张 w 的未现上限 caps[w]==0(即外面 3 张已全部现身/锁死)时，
+    胡牌者暗手里不可能再有另一张 w(不能作将、刻子或七对)，w 只能与暗手牌凑成顺子。
+    因此所有合法顺子搭子的交集，100% 必然在胡牌者暗手里(即使组合总数 > ENUM_LIMIT 也完全成立)。
+    """
+    out = own_floor.copy()
+    win_suit, r = divmod(win_index, 9)
+    if void_suit is not None and SUIT_ORDER[win_suit] == void_suit:
+        return out
+    if caps[win_index] > 0:
+        return out
+    base = win_suit * 9
+    # 枚举 w 所在的全部合法顺子所需的另外两张暗牌
+    valid_pairs: list[tuple[int, int]] = []
+    if r >= 2 and caps[base + r - 2] >= 1 and caps[base + r - 1] >= 1:
+        valid_pairs.append((base + r - 2, base + r - 1))
+    if 1 <= r <= 7 and caps[base + r - 1] >= 1 and caps[base + r + 1] >= 1:
+        valid_pairs.append((base + r - 1, base + r + 1))
+    if r <= 6 and caps[base + r + 1] >= 1 and caps[base + r + 2] >= 1:
+        valid_pairs.append((base + r + 1, base + r + 2))
+    if not valid_pairs:
+        return out
+    common = set(valid_pairs[0])
+    for pair in valid_pairs[1:]:
+        common &= set(pair)
+    for t in common:
+        if out[t] < 1:
+            out[t] = 1
+    return out
+
+
 def infer_winners(
     state: AssistantState,
     counts: TileCounts,
@@ -278,17 +314,19 @@ def infer_winners(
         view = state.players[record.seat]
         own_floor = floor_of.get(record.seat, zero)
         if record.tile is None:
-            pending.append((record, view, STATUS_UNKNOWN_TILE, _EMPTY, own_floor))
+            pending.append((record, view, STATUS_UNKNOWN_TILE, _EMPTY, own_floor, own_floor))
             continue
         caps = tuple(int(x) for x in np.maximum(unseen - (total_floor - own_floor), 0))
-        floor_arg = tuple(int(x) for x in own_floor) if own_floor.any() else None
-        status, cands = enumerate_hidden_hands(tidx(record.tile), len(view.melds), view.void_suit, caps, enum_limit, floor_arg)
-        pending.append((record, view, status, cands, own_floor))
+        win_idx = tidx(record.tile)
+        deduced_floor = _deduce_certain_from_win_tile(win_idx, caps, view.void_suit, own_floor)
+        floor_arg = tuple(int(x) for x in deduced_floor) if deduced_floor.any() else None
+        status, cands = enumerate_hidden_hands(win_idx, len(view.melds), view.void_suit, caps, enum_limit, floor_arg)
+        pending.append((record, view, status, cands, own_floor, deduced_floor))
 
     complete = [item for item in pending if item[2] == STATUS_COMPLETE]
     joint_weights: dict[int, np.ndarray] = {}
     if len(complete) == 2 and len(complete[0][3]) * len(complete[1][3]) <= joint_limit:
-        (rec_a, _, _, a_hands, a_floor), (rec_b, _, _, b_hands, b_floor) = sorted(complete, key=lambda item: len(item[3]))
+        (rec_a, _, _, a_hands, a_floor, _), (rec_b, _, _, b_hands, b_floor, _) = sorted(complete, key=lambda item: len(item[3]))
         # 只有"一定有"之外的部分是随机来的;仅保留至少一方可能用到的列以减少2-3倍内存带宽
         a_arr = a_hands - a_floor
         b_arr = b_hands - b_floor
@@ -311,20 +349,22 @@ def infer_winners(
         joint_weights[rec_b.seat] = wb
 
     results: list[WinnerInference] = []
-    for record, view, status, cands, own_floor in pending:
+    for record, view, status, cands, own_floor, deduced_floor in pending:
         if status == STATUS_COMPLETE:
             joint = record.seat in joint_weights
             weights = joint_weights[record.seat] if joint else _ways(pool, cands - own_floor)
             results.append(_build(record.seat, record.tile, view.hidden_count, cands, weights, joint))
         else:
+            extra_deduced = np.maximum(deduced_floor - own_floor, 0)
+            pool_adj = np.maximum(pool - extra_deduced, 0)
             results.append(
                 WinnerInference(
                     record.seat,
                     record.tile,
                     view.hidden_count,
                     status,
-                    certain=tuple(int(x) for x in own_floor),
-                    expected=_proportional_expected(view.hidden_count, view.void_suit, pool, own_floor),
+                    certain=tuple(int(x) for x in deduced_floor),
+                    expected=_proportional_expected(view.hidden_count, view.void_suit, pool_adj, deduced_floor),
                 )
             )
     return results

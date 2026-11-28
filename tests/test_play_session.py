@@ -52,6 +52,10 @@ def test_view_never_contains_other_players_hidden_tiles_before_the_hand_ends(tmp
         if not view["finished"]:
             for seat in view["seats"][1:]:
                 assert seat["hand"] is None
+            # 行牌中(含有人先胡牌后)不得提前暴露本局得分或实时累积分, 防止通过赢分反推番型/手牌
+            for idx, seat in enumerate(view["seats"]):
+                assert seat["score"] == 0
+                assert seat["total"] == session.totals[idx]
             checked += 1
         if session.waiting_for_human():
             _human_move(session, rng)

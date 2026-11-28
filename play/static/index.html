@@ -165,6 +165,7 @@
 
     /* ---------- 牌桌 ---------- */
     .stage {
+      position: relative;
       padding: 14px;
       min-width: 0;
       min-height: 0;
@@ -270,42 +271,337 @@
       text-shadow: 0 1px 2px #092718;
     }
 
+    .tile.inferred-tile {
+      outline: 2px solid #38bdf8;
+      outline-offset: 1px;
+      box-shadow: 0 3px 0 var(--tile-back), 0 4px 0 var(--tile-back-lo), 0 0 10px rgba(56, 189, 248, .6);
+    }
+
+    .tile.inferred-tile::after {
+      content: "推知";
+      position: absolute;
+      left: 50%;
+      bottom: -15px;
+      transform: translateX(-50%);
+      color: #7dd3fc;
+      font-size: 9px;
+      font-weight: 700;
+      white-space: nowrap;
+      text-shadow: 0 1px 2px #082f49;
+    }
+
+    .tile.side.inferred-tile::after {
+      left: auto;
+      bottom: auto;
+      top: 2px;
+      right: 2px;
+      transform: none;
+      background: rgba(2, 132, 199, .92);
+      color: #fff;
+      padding: 1px 3px;
+      border-radius: 4px;
+      font-size: 8px;
+      line-height: 1.1;
+      text-shadow: none;
+    }
+
     .tile.dim {
       filter: brightness(.86) saturate(.8);
     }
 
     .tile.latest {
-      outline: 2px solid var(--gold);
-      outline-offset: 1px;
-      animation: glow 1.4s ease-in-out infinite;
+      outline: 2.5px solid #ffd36a;
+      outline-offset: 2px;
+      z-index: 4;
+      animation: glow 1.2s ease-in-out infinite;
     }
 
     @keyframes glow {
 
       0%,
       100% {
-        box-shadow: 0 3px 0 var(--tile-back), 0 4px 0 var(--tile-back-lo), 0 0 6px 2px rgba(232, 196, 106, .6);
+        box-shadow: 0 3px 0 var(--tile-back), 0 4px 0 var(--tile-back-lo), 0 0 8px 3px rgba(255, 211, 106, .75);
       }
 
       50% {
-        box-shadow: 0 3px 0 var(--tile-back), 0 4px 0 var(--tile-back-lo), 0 0 14px 5px rgba(232, 196, 106, .9);
+        box-shadow: 0 3px 0 var(--tile-back), 0 4px 0 var(--tile-back-lo), 0 0 18px 6px rgba(255, 211, 106, 1);
       }
     }
 
     .tile.fresh {
-      animation: drop .35s cubic-bezier(.2, .9, .3, 1.3);
+      animation: dropTop .48s cubic-bezier(.18, .92, .32, 1.2);
     }
 
-    @keyframes drop {
+    .r-bot .tile.fresh {
+      animation: dropBot .48s cubic-bezier(.18, .92, .32, 1.2);
+    }
+
+    .r-left .tile.fresh {
+      animation: dropLeft .48s cubic-bezier(.18, .92, .32, 1.2);
+    }
+
+    .r-right .tile.fresh {
+      animation: dropRight .48s cubic-bezier(.18, .92, .32, 1.2);
+    }
+
+    @keyframes dropTop {
       from {
-        transform: translateY(-26px) scale(1.25);
-        opacity: 0;
+        transform: translateY(-34px) scale(1.38);
+        opacity: .25;
       }
 
       to {
         transform: none;
         opacity: 1;
       }
+    }
+
+    @keyframes dropBot {
+      from {
+        transform: translateY(34px) scale(1.38);
+        opacity: .25;
+      }
+
+      to {
+        transform: none;
+        opacity: 1;
+      }
+    }
+
+    @keyframes dropLeft {
+      from {
+        transform: translateX(-34px) scale(1.38);
+        opacity: .25;
+      }
+
+      to {
+        transform: none;
+        opacity: 1;
+      }
+    }
+
+    @keyframes dropRight {
+      from {
+        transform: translateX(34px) scale(1.38);
+        opacity: .25;
+      }
+
+      to {
+        transform: none;
+        opacity: 1;
+      }
+    }
+
+    /* 游戏级出牌大特写浮卡 (雀魂风格) */
+    .discard-pop {
+      position: absolute;
+      z-index: 24;
+      pointer-events: none;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 6px;
+      padding: 10px 14px 12px;
+      border-radius: 14px;
+      background: rgba(14, 24, 20, .88);
+      border: 1.5px solid rgba(232, 196, 106, .75);
+      box-shadow: 0 12px 28px rgba(0, 0, 0, .65), 0 0 18px rgba(232, 196, 106, .35);
+      animation: popSpot var(--pop-dur, 1050ms) cubic-bezier(.18, .92, .32, 1.15) forwards;
+    }
+
+    .discard-pop .who-lbl {
+      font-size: 13px;
+      font-weight: 700;
+      color: #ffd97d;
+      letter-spacing: 1px;
+      white-space: nowrap;
+    }
+
+    .discard-pop .tile {
+      width: 58px;
+      height: 82px;
+      border-radius: 7px;
+      margin: 0;
+      box-shadow: 0 4px 0 var(--tile-back), 0 6px 0 var(--tile-back-lo), 0 10px 16px rgba(0, 0, 0, .55), inset 0 1px 0 #fff;
+    }
+
+    .discard-pop.s-0 {
+      left: 50%;
+      bottom: 215px;
+      transform: translateX(-50%);
+    }
+
+    .discard-pop.s-1 {
+      right: 175px;
+      top: 46%;
+      transform: translateY(-50%);
+    }
+
+    .discard-pop.s-2 {
+      left: 50%;
+      top: 138px;
+      transform: translateX(-50%);
+    }
+
+    .discard-pop.s-3 {
+      left: 175px;
+      top: 46%;
+      transform: translateY(-50%);
+    }
+
+    @keyframes popSpot {
+      0% {
+        opacity: 0;
+        scale: .62;
+      }
+
+      16% {
+        opacity: 1;
+        scale: 1.08;
+      }
+
+      28% {
+        opacity: 1;
+        scale: 1;
+      }
+
+      78% {
+        opacity: 1;
+        scale: 1;
+      }
+
+      100% {
+        opacity: 0;
+        scale: .92;
+      }
+    }
+
+    /* 碰 / 杠 喊牌特效 */
+    .callout {
+      position: absolute;
+      z-index: 26;
+      pointer-events: none;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 8px 18px;
+      border-radius: 999px;
+      background: rgba(12, 18, 28, .92);
+      border: 2px solid #ffd36a;
+      box-shadow: 0 10px 28px rgba(0, 0, 0, .7), 0 0 24px rgba(255, 211, 106, .45);
+      animation: calloutPop 1.35s cubic-bezier(.18, .92, .32, 1.18) forwards;
+      white-space: nowrap;
+    }
+
+    .callout.pong {
+      border-color: #38bdf8;
+      box-shadow: 0 10px 28px rgba(0, 0, 0, .7), 0 0 24px rgba(56, 189, 248, .5);
+    }
+
+    .callout.kong {
+      border-color: #c084fc;
+      box-shadow: 0 10px 28px rgba(0, 0, 0, .7), 0 0 24px rgba(192, 132, 252, .55);
+    }
+
+    .callout .word {
+      font-family: "STKaiti", "KaiTi", serif;
+      font-size: 38px;
+      font-weight: 900;
+      letter-spacing: 3px;
+      color: #fff2c2;
+      text-shadow: 0 3px 8px rgba(0, 0, 0, .8);
+    }
+
+    .callout.pong .word {
+      color: #7dd3fc;
+    }
+
+    .callout.kong .word {
+      color: #e9d5ff;
+    }
+
+    .callout .sub {
+      font-size: 13px;
+      color: #e2e8f0;
+      font-weight: 700;
+    }
+
+    .callout .tile {
+      width: 40px;
+      height: 56px;
+      margin: 0;
+    }
+
+    .callout.s-0 {
+      left: 50%;
+      bottom: 230px;
+      transform: translateX(-50%);
+    }
+
+    .callout.s-1 {
+      right: 165px;
+      top: 44%;
+      transform: translateY(-50%);
+    }
+
+    .callout.s-2 {
+      left: 50%;
+      top: 135px;
+      transform: translateX(-50%);
+    }
+
+    .callout.s-3 {
+      left: 165px;
+      top: 44%;
+      transform: translateY(-50%);
+    }
+
+    @keyframes calloutPop {
+      0% {
+        opacity: 0;
+        scale: .45;
+      }
+
+      18% {
+        opacity: 1;
+        scale: 1.12;
+      }
+
+      30% {
+        opacity: 1;
+        scale: 1;
+      }
+
+      78% {
+        opacity: 1;
+        scale: 1;
+      }
+
+      100% {
+        opacity: 0;
+        scale: .94;
+      }
+    }
+
+    .pause-btn {
+      background: #1f2636;
+      color: #e6d8b3;
+      border: 1px solid #3a4054;
+      border-radius: 6px;
+      padding: 4px 10px;
+      cursor: pointer;
+      font-size: 12px;
+      font-weight: 600;
+    }
+
+    .pause-btn:hover {
+      border-color: var(--gold);
+    }
+
+    .pause-btn.paused {
+      background: #854d0e;
+      border-color: var(--gold);
+      color: #fef3c7;
     }
 
     .tile.won-tile {
@@ -347,6 +643,22 @@
       color: #fff;
       border-radius: 8px;
       box-shadow: 0 1px 3px rgba(0, 0, 0, .4);
+    }
+
+    .tile.hand.tenpai-can::after {
+      content: "听";
+      position: absolute;
+      top: -9px;
+      left: -5px;
+      z-index: 2;
+      font-size: 11px;
+      font-weight: 700;
+      line-height: 1;
+      padding: 3px 4px;
+      background: linear-gradient(180deg, #34d399, #059669);
+      color: #fff;
+      border-radius: 8px;
+      box-shadow: 0 1px 4px rgba(0, 0, 0, .45);
     }
 
     .tile.hand.hint {
@@ -699,8 +1011,8 @@
 
     .compass {
       grid-area: compass;
-      width: 150px;
-      height: 150px;
+      width: 178px;
+      height: 178px;
       border-radius: 22px;
       position: relative;
       align-self: center;
@@ -716,10 +1028,11 @@
       display: grid;
       place-content: center;
       text-align: center;
+      pointer-events: none;
     }
 
     .compass .wall {
-      font-size: 30px;
+      font-size: 28px;
       font-weight: 800;
       color: var(--gold);
       line-height: 1;
@@ -729,15 +1042,21 @@
     .compass .lbl {
       font-size: 11px;
       color: #9a937f;
-      margin-top: 4px;
+      margin-top: 3px;
     }
 
     .compass .dir {
       position: absolute;
-      font-family: "STKaiti", "KaiTi", serif;
-      font-size: 15px;
-      color: #6c6657;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 4px;
+      font-family: "Microsoft YaHei", sans-serif;
+      font-size: 12px;
+      font-weight: 700;
+      color: #8b8473;
       transition: color .2s, text-shadow .2s;
+      white-space: nowrap;
     }
 
     .compass .dir.on {
@@ -745,30 +1064,64 @@
       text-shadow: 0 0 10px var(--gold);
     }
 
+    .compass .vpill {
+      display: inline-block;
+      padding: 1px 5px;
+      border-radius: 999px;
+      font-size: 11px;
+      font-weight: 800;
+      line-height: 1.25;
+      color: #fff;
+      box-shadow: 0 1px 4px rgba(0, 0, 0, .5);
+    }
+
+    .compass .vpill.W {
+      background: linear-gradient(180deg, #e0533f, #a32515);
+      border: 1px solid rgba(255, 180, 165, .5);
+    }
+
+    .compass .vpill.T {
+      background: linear-gradient(180deg, #2fb363, #176938);
+      border: 1px solid rgba(155, 245, 190, .5);
+    }
+
+    .compass .vpill.B {
+      background: linear-gradient(180deg, #3b82f6, #1d4ed8);
+      border: 1px solid rgba(170, 210, 255, .5);
+    }
+
+    .compass .vpill.none {
+      background: #2d3343;
+      color: #94a3b8;
+      font-weight: 500;
+    }
+
     .compass .d0 {
-      bottom: 6px;
+      bottom: 7px;
       left: 50%;
       transform: translateX(-50%);
     }
 
     .compass .d1 {
-      right: 7px;
+      right: 6px;
       top: 50%;
       transform: translateY(-50%);
-      writing-mode: vertical-rl;
+      flex-direction: column;
+      gap: 2px;
     }
 
     .compass .d2 {
-      top: 6px;
+      top: 7px;
       left: 50%;
       transform: translateX(-50%);
     }
 
     .compass .d3 {
-      left: 7px;
+      left: 6px;
       top: 50%;
       transform: translateY(-50%);
-      writing-mode: vertical-rl;
+      flex-direction: column;
+      gap: 2px;
     }
 
     .compass .bar {
@@ -960,6 +1313,362 @@
 
     .ticker div:nth-last-child(n+4) {
       opacity: .45;
+    }
+
+    /* ---------- 主桌听牌浮条 ---------- */
+    .tenpai-dock {
+      position: absolute;
+      left: 50%;
+      bottom: 112px;
+      transform: translateX(-50%);
+      z-index: 6;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      max-width: calc(100% - 460px);
+      padding: 7px 14px;
+      border-radius: 14px;
+      background: rgba(11, 15, 22, .88);
+      border: 1px solid rgba(232, 196, 106, .62);
+      box-shadow: 0 8px 24px rgba(0, 0, 0, .55), inset 0 1px 0 rgba(255, 255, 255, .1);
+      backdrop-filter: blur(4px);
+      pointer-events: none;
+    }
+
+    .tenpai-dock.dead {
+      border-color: rgba(239, 68, 68, .55);
+    }
+
+    .tenpai-dock .td-head {
+      display: flex;
+      flex-direction: column;
+      align-items: flex-start;
+      padding-right: 10px;
+      border-right: 1px solid rgba(255, 255, 255, .14);
+      white-space: nowrap;
+      flex-shrink: 0;
+    }
+
+    .tenpai-dock .td-title {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      font-size: 13px;
+      font-weight: 800;
+      color: var(--gold-hi);
+      line-height: 1.2;
+    }
+
+    .tenpai-dock.dead .td-title {
+      color: #ff8a7a;
+    }
+
+    .tenpai-dock .td-sum {
+      margin-top: 2px;
+      font-size: 12px;
+      color: #cbd5e1;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .tenpai-dock .td-sum b {
+      color: #5fe08f;
+      font-size: 14px;
+    }
+
+    .tenpai-dock.dead .td-sum b {
+      color: #ff7a66;
+    }
+
+    .tenpai-dock .td-list {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: nowrap;
+      overflow-x: auto;
+    }
+
+    .tenpai-dock .td-item {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 3px 8px 3px 5px;
+      border-radius: 9px;
+      background: rgba(255, 255, 255, .07);
+      border: 1px solid rgba(255, 255, 255, .12);
+      white-space: nowrap;
+      flex-shrink: 0;
+    }
+
+    .tenpai-dock .td-item.dead {
+      opacity: .52;
+      background: rgba(239, 68, 68, .08);
+      border-color: rgba(239, 68, 68, .25);
+    }
+
+    .tenpai-dock .tile.mini {
+      --riv-w: 25px;
+      --riv-h: 35px;
+      margin-bottom: 0;
+    }
+
+    .tenpai-dock .td-meta {
+      display: flex;
+      flex-direction: column;
+      line-height: 1.25;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .tenpai-dock .td-rem {
+      font-size: 13px;
+      font-weight: 800;
+    }
+
+    .tenpai-dock .td-rem.ok {
+      color: #5fe08f;
+    }
+
+    .tenpai-dock .td-rem.low {
+      color: #ffd36a;
+    }
+
+    .tenpai-dock .td-rem.zero {
+      color: #ff7a66;
+    }
+
+    .tenpai-dock .td-fan {
+      font-size: 11px;
+      color: #94a3b8;
+    }
+
+    .tenpai-dock .td-fan.mid {
+      color: #e8c46a;
+    }
+
+    .tenpai-dock .td-fan.hi {
+      color: #ffb74d;
+      font-weight: 700;
+    }
+
+    .tenpai-dock .td-inf {
+      font-size: 10px;
+      color: #7dd3fc;
+      margin-top: 1px;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .tenpai-dock .td-inf .wlock {
+      color: #fbbf24;
+    }
+
+    /* ---------- 主桌残局/花色推理浮卡 ---------- */
+    .suit-hud {
+      position: absolute;
+      right: 118px;
+      top: 196px;
+      width: 266px;
+      z-index: 6;
+      border-radius: 13px;
+      padding: 8px 10px;
+      background: rgba(11, 15, 22, .86);
+      border: 1px solid rgba(125, 211, 252, .45);
+      box-shadow: 0 8px 24px rgba(0, 0, 0, .52), inset 0 1px 0 rgba(255, 255, 255, .08);
+      backdrop-filter: blur(4px);
+      color: #e2e8f0;
+      font-size: 11px;
+      line-height: 1.35;
+    }
+
+    .suit-hud.collapsed {
+      width: auto;
+      padding: 5px 10px;
+    }
+
+    .suit-hud .sh-top {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 6px;
+      margin-bottom: 6px;
+    }
+
+    .suit-hud.collapsed .sh-top {
+      margin-bottom: 0;
+    }
+
+    .suit-hud .sh-title {
+      font-size: 12px;
+      font-weight: 800;
+      color: #7dd3fc;
+      display: flex;
+      align-items: center;
+      gap: 5px;
+    }
+
+    .suit-hud .sh-tabs {
+      display: flex;
+      gap: 3px;
+    }
+
+    .suit-hud .sh-tab {
+      border: 1px solid rgba(255, 255, 255, .16);
+      background: rgba(255, 255, 255, .06);
+      color: #cbd5e1;
+      border-radius: 6px;
+      padding: 1px 6px;
+      font-size: 11px;
+      cursor: pointer;
+    }
+
+    .suit-hud .sh-tab.on {
+      background: #0284c7;
+      border-color: #7dd3fc;
+      color: #fff;
+      font-weight: 700;
+    }
+
+    .suit-hud .sh-toggle {
+      border: none;
+      background: transparent;
+      color: #94a3b8;
+      font-size: 11px;
+      cursor: pointer;
+      padding: 0 2px;
+    }
+
+    .suit-hud .sh-toggle:hover {
+      color: #fff;
+    }
+
+    .suit-hud .sh-pills {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 4px;
+      margin-bottom: 5px;
+    }
+
+    .suit-hud .sh-pill {
+      padding: 1px 6px;
+      border-radius: 999px;
+      font-size: 10px;
+      font-weight: 700;
+      background: rgba(255, 255, 255, .08);
+      color: #cbd5e1;
+    }
+
+    .suit-hud .sh-pill.void2 {
+      background: rgba(16, 185, 129, .24);
+      border: 1px solid rgba(52, 211, 153, .5);
+      color: #6ee7b7;
+    }
+
+    .suit-hud .sh-pill.wall {
+      background: rgba(14, 165, 233, .22);
+      border: 1px solid rgba(125, 211, 252, .45);
+      color: #7dd3fc;
+    }
+
+    .suit-hud .sh-pill.win {
+      background: rgba(245, 158, 11, .2);
+      border: 1px solid rgba(251, 191, 36, .45);
+      color: #fcd34d;
+    }
+
+    .suit-hud .sh-clue {
+      background: rgba(251, 191, 36, .08);
+      border: 1px solid rgba(251, 191, 36, .24);
+      border-radius: 8px;
+      padding: 4px 6px;
+      margin-bottom: 6px;
+    }
+
+    .suit-hud .sh-clue-hd {
+      font-size: 10px;
+      color: #fde68a;
+      margin-bottom: 3px;
+    }
+
+    .suit-hud .sh-hot {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 4px;
+    }
+
+    .suit-hud .sh-hot span {
+      background: rgba(251, 191, 36, .16);
+      color: #fef3c7;
+      border-radius: 5px;
+      padding: 1px 5px;
+      font-size: 10px;
+      font-weight: 700;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .suit-hud .sh-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 4px;
+    }
+
+    .suit-hud .sh-cell {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      padding: 3px 4px;
+      border-radius: 7px;
+      background: rgba(255, 255, 255, .05);
+      border: 1px solid rgba(255, 255, 255, .08);
+      font-variant-numeric: tabular-nums;
+    }
+
+    .suit-hud .sh-cell.zero {
+      opacity: .38;
+    }
+
+    .suit-hud .sh-cell.is-wait {
+      background: rgba(16, 185, 129, .18);
+      border-color: rgba(52, 211, 153, .7);
+      box-shadow: 0 0 8px rgba(52, 211, 153, .22);
+    }
+
+    .suit-hud .sh-cell .tile.mini {
+      --riv-w: 20px;
+      --riv-h: 28px;
+      margin-bottom: 0;
+    }
+
+    .suit-hud .sh-cmeta {
+      display: flex;
+      flex-direction: column;
+      line-height: 1.15;
+      min-width: 0;
+    }
+
+    .suit-hud .sh-cmeta b {
+      font-size: 11px;
+      color: #f8fafc;
+    }
+
+    .suit-hud .sh-cmeta .cw {
+      font-size: 10px;
+      color: #7dd3fc;
+    }
+
+    .suit-hud .sh-cmeta .ck {
+      font-size: 9px;
+      color: #fbbf24;
+    }
+
+    @media (max-width: 1360px) {
+      .suit-hud {
+        right: 106px;
+        width: 238px;
+      }
+    }
+
+    @media (max-width: 1180px) {
+      .suit-hud {
+        display: none;
+      }
     }
 
     /* 屏幕窄时缩小手牌,不让信息牌压到牌;屏幕矮时少显示几行提示,不挡上家的牌 */
@@ -1701,9 +2410,14 @@
       <div class="topinfo" id="topinfo"></div>
       <div class="spacer"></div>
       <div class="scoreboard" id="scoreboard"></div>
-      <div class="speed">AI 速度
-        <div class="seg" id="speed"><button data-v="1100">慢</button><button data-v="600">中</button><button
-            data-v="250">快</button></div>
+      <button class="pause-btn" id="pauseBtn" title="暂停/继续 AI 自动出牌">⏸ 暂停</button>
+      <button class="pause-btn" id="stepBtn" title="暂停状态下点一下推进 1 步 AI 动作" style="display:none">⏭ 下一步</button>
+      <div class="speed" style="gap:6px">节奏
+        <input id="speedRange" type="range" min="500" max="4000" step="100" value="1800"
+          style="width:92px;accent-color:#e8c46a;cursor:pointer" title="拖动自由调节每步间隔(0.5秒 ~ 4.0秒)" />
+        <span id="speedVal" style="min-width:34px;font-weight:700;color:#ffd36a;font-size:12px">1.8s</span>
+        <div class="seg" id="speed"><button data-v="2600">2.6s</button><button data-v="1800">1.8s</button><button
+            data-v="1000">1.0s</button></div>
       </div>
     </header>
     <div class="main">
@@ -1717,7 +2431,7 @@
           <h2>打牌辅助</h2>
           <div class="legend"><span class="tier t1">确定</span><span class="tier t2">计数</span><span
               class="tier t3">概率</span></div>
-          <button class="mark-btn" id="markBtn" title="把当前局面、辅助器输出和你的备注存下来">🚩 标记这一刻</button>
+          <button class="mark-btn" id="markBtn" title="对当前局面给辅助器提实时反馈(自动记录牌面+推荐+真实复盘线索)">🚩 实时反馈</button>
         </div>
         <div class="aside-body" id="aside">
           <div class="empty">载入中…</div>
@@ -1757,8 +2471,13 @@
     let hoverTile = null;
     let lastEventN = 0;
     let fastForward = false;
-    let delay = 600;
-    try { delay = Number(localStorage.getItem('mj.delay')) || 600; } catch (e) { }
+    let paused = false;
+    let lastDiscardSeat = null;
+    let delay = 1800;
+    try {
+      const saved = Number(localStorage.getItem('mj.delay.v3'));
+      if (saved >= 500 && saved <= 4000) delay = saved;
+    } catch (e) { }
 
     async function api(path, body) {
       const res = await fetch(path, { method: body === undefined ? 'GET' : 'POST', headers: { 'Content-Type': 'application/json' }, body: body === undefined ? undefined : JSON.stringify(body) });
@@ -1804,21 +2523,26 @@
     }
     function backsHtml(seat, dir) {
       const known = seat.known_tiles || [];
+      const inferred = seat.inferred_tiles || [];
       const n = seat.hidden;
       const win = winTileHtml(seat, dir);
       const knownHtml = known.map(code => tileHtml(code, 'known-tile')).join('');
-      if (dir === 'top') return `<div class="backs-row">${'<span class="tile back"></span>'.repeat(n)}${knownHtml}${win}</div>`;
-      const sideKnown = known.map(code => tileHtml(code, 'side known-tile', `style="--rot:${dir === 'left' ? '90deg' : '-90deg'}"`)).join('');
-      return `<div class="backs-col">${'<span class="tile back side"></span>'.repeat(n)}${sideKnown}${win}</div>`;
+      const infHtml = inferred.map(code => tileHtml(code, 'inferred-tile', `title="断张/组合100%反推必有"`)).join('');
+      if (dir === 'top') return `<div class="backs-row">${'<span class="tile back"></span>'.repeat(n)}${knownHtml}${infHtml}${win}</div>`;
+      const rot = dir === 'left' ? '90deg' : '-90deg';
+      const sideKnown = known.map(code => tileHtml(code, 'side known-tile', `style="--rot:${rot}"`)).join('');
+      const sideInf = inferred.map(code => tileHtml(code, 'side inferred-tile', `style="--rot:${rot}" title="断张/组合100%反推必有"`)).join('');
+      return `<div class="backs-col">${'<span class="tile back side"></span>'.repeat(n)}${sideKnown}${sideInf}${win}</div>`;
     }
     function riverHtml(seat, dir) {
       const pend = view.pending && view.pending.seat === seat.seat;
+      const isLastDis = lastDiscardSeat === seat.seat;
       const side = dir === 'left' || dir === 'right';
       const rot = dir === 'left' ? '90deg' : '-90deg';
       return seat.river.map((code, i) => {
         let c = side ? 'side' : '';
         const last = i === seat.river.length - 1;
-        if (last && pend) c += ' latest';
+        if (last && (pend || isLastDis)) c += ' latest';
         if (last && freshSeats.has(seat.seat)) c += ' fresh';
         return tileHtml(code, c, side ? `style="--rot:${rot}"` : '');
       }).join('');
@@ -1830,7 +2554,13 @@
       const s = v.seats;
       const top = s[2], left = s[3], right = s[1], me = s[0];
       const curPos = v.finished || v.current === null ? -1 : v.current;
-      const dirs = [0, 1, 2, 3].map(i => `<div class="dir d${i} ${curPos === i ? 'on' : ''}">${['自己', '下家', '对家', '上家'][i]}</div><div class="bar b${i} ${curPos === i ? 'on' : ''}"></div>`).join('');
+      const dirs = [0, 1, 2, 3].map(i => {
+        const vs = s[i].void;
+        const vpill = vs
+          ? `<span class="vpill ${vs}">缺${SUIT_CN[vs]}</span>`
+          : (v.phase === 'play' || v.phase === 'finished' ? '' : '<span class="vpill none">未缺</span>');
+        return `<div class="dir d${i} ${curPos === i ? 'on' : ''}"><span>${['自己', '下家', '对家', '上家'][i]}</span>${vpill}</div><div class="bar b${i} ${curPos === i ? 'on' : ''}"></div>`;
+      }).join('');
       const phaseText = { swap_three: '换三张', declare_void: '定缺', play: '行牌', finished: '本局结束' }[v.phase] || v.phase;
 
       let html = `
@@ -1851,9 +2581,172 @@
     <div class="myrow"><div class="hand" id="hand">${myHandHtml()}</div>${me.won && me.win && me.win.tile ? `<div class="win-mine">${tileHtml(me.win.tile, 'hand won-tile')}</div>` : ''}<div class="melds">${meldsHtml(me, 'bottom')}</div></div>
   </div>
   <div class="ticker" id="ticker">${v.events.slice(-6).map(e => `<div>${esc(e.text)}</div>`).join('')}</div>
+  <div id="suitHudWrap">${suitHudHtml()}</div>
+  <div id="tenpaiDockWrap">${tenpaiDockHtml()}</div>
   ${actionsHtml()}`;
       document.getElementById('felt').innerHTML = html;
       bindHand();
+    }
+
+    let suitHudCollapsed = false;
+    let suitHudSelected = null;
+    function setSuitHudTab(s) {
+      suitHudSelected = s;
+      const w = document.getElementById('suitHudWrap');
+      if (w) w.innerHTML = suitHudHtml();
+    }
+    function toggleSuitHud() {
+      suitHudCollapsed = !suitHudCollapsed;
+      const w = document.getElementById('suitHudWrap');
+      if (w) w.innerHTML = suitHudHtml();
+    }
+
+    function activeWaitCodes() {
+      const set = new Set();
+      const info = view?.report?.own_info;
+      if (!info) return set;
+      let waits = null;
+      if (info.mode === 'wait' && info.shanten === 0 && info.waits?.length) waits = info.waits;
+      else if (info.mode === 'discard') {
+        const tp = tenpaiDiscardMap();
+        const chosen = tp.best;
+        if (chosen && chosen.waits?.length) waits = chosen.waits;
+      }
+      if (waits) waits.forEach(w => set.add(fromLabel(w.tile)));
+      return set;
+    }
+
+    function suitHudHtml() {
+      const v = view;
+      if (!v || v.finished || v.phase !== 'play' || v.seats?.[0]?.won) return '';
+      const list = v.report?.suit_inference;
+      if (!list || !list.length) return '';
+      const nonVoid = list.filter(s => !s.is_my_void);
+      if (!nonVoid.length) return '';
+      const hasWinner = v.seats.some(s => s.won);
+      const hasVoid2 = nonVoid.some(s => s.opp_void_count >= 2);
+      if (!hasWinner && !hasVoid2 && v.wall > 24) return '';
+
+      const waits = activeWaitCodes();
+      // 默认优先展示: 用户手动选的花色 -> 当前听口最集中的花色 -> 对手缺门最多/已胡线索最多的花色
+      let cur = nonVoid.find(s => s.suit === suitHudSelected);
+      if (!cur) {
+        const waitCounts = {};
+        waits.forEach(c => { const su = c.slice(-1); waitCounts[su] = (waitCounts[su] || 0) + 1; });
+        cur = nonVoid.slice().sort((a, b) =>
+          (waitCounts[b.suit] || 0) - (waitCounts[a.suit] || 0)
+          || b.opp_void_count - a.opp_void_count
+          || b.winner_expected - a.winner_expected
+          || b.wall_share - a.wall_share
+        )[0];
+      }
+      if (!cur) return '';
+
+      if (suitHudCollapsed) {
+        return `<div class="suit-hud collapsed"><div class="sh-top"><span class="sh-title">🔍 ${esc(cur.label)}子推理</span><button class="sh-toggle" onclick="toggleSuitHud()">展开</button></div></div>`;
+      }
+
+      const tabs = nonVoid.map(s => `<button class="sh-tab ${s.suit === cur.suit ? 'on' : ''}" onclick="setSuitHudTab('${s.suit}')">${esc(s.label)}</button>`).join('');
+      const voidPill = cur.opp_void_count > 0
+        ? `<span class="sh-pill ${cur.opp_void_count >= 2 ? 'void2' : ''}">${cur.opp_void_count}家缺${esc(cur.label)}(${cur.void_seats.map(esc).join('、')})</span>`
+        : '';
+      const wallPct = Math.round((cur.wall_share || 0) * 100);
+      const pills = `${voidPill}<span class="sh-pill wall">墙内 ≈${cur.wall_expected.toFixed(1)}/${v.wall} (${wallPct}%)</span>`
+        + (cur.winner_expected >= 0.2 ? `<span class="sh-pill win">已胡估扣 ≈${cur.winner_expected.toFixed(1)}</span>` : '')
+        + `<span class="sh-pill">在场对手 ≈${cur.active_opp_expected.toFixed(1)}</span>`;
+
+      const clues = (cur.winner_clues || []).map(cl => {
+        const sureHtml = (cl.certain_tiles || []).map(ct => `<span style="background:rgba(56,189,248,.28);border:1px solid rgba(125,211,252,.65);color:#e0f2fe">必有 ${esc(ct.tile)}${ct.count > 1 ? '×' + ct.count : ''}</span>`).join('');
+        const hotHtml = (cl.hot_tiles || []).slice(0, 4).map(h => `<span>${esc(h.tile)} ${Math.round(h.prob * 100)}%</span>`).join('');
+        const cntTxt = cl.candidate_count ? `${cl.candidate_count}种组合` : '已反推';
+        return `<div class="sh-clue"><div class="sh-clue-hd"><b>${esc(cl.name)}</b> ${esc(cl.how)}${esc(cl.tile)} (${cntTxt} · 估扣${cl.suit_expected.toFixed(1)}张${esc(cur.label)})</div>${(sureHtml || hotHtml) ? `<div class="sh-hot">${sureHtml}${hotHtml}</div>` : ''}</div>`;
+      }).join('');
+
+      const grid = (cur.tiles || []).map(t => {
+        const code = `${t.rank}${cur.suit}`;
+        const isW = waits.has(code);
+        const eff = t.effective_unseen !== undefined ? t.effective_unseen : t.unseen;
+        const locked = Number(t.certain_locked) || 0;
+        const zero = eff === 0;
+        const statusLbl = t.unseen === 0 ? '绝' : (eff === 0 ? '锁绝' : (locked > 0 ? '实余' + eff : '余' + t.unseen));
+        const wk = locked > 0
+          ? `<span class="ck" style="color:#7dd3fc;font-weight:700">必扣${locked}</span>`
+          : (t.winner_expected >= 0.25 ? `<span class="ck">扣${t.winner_expected.toFixed(1)}</span>` : '');
+        const tip = `${t.tile} · 牌面未现 ${t.unseen} 张${locked ? ` (已胡100%锁死 ${locked} 张, 实际在外 ${eff} 张)` : ''} | 墙内估 ${t.wall_expected.toFixed(2)} | 已胡估扣 ${t.winner_expected.toFixed(2)} | 在场对手 ${t.active_opp_expected.toFixed(2)}`;
+        return `<div class="sh-cell ${zero ? 'zero' : ''} ${isW ? 'is-wait' : ''}" title="${esc(tip)}">${tileHtml(code, 'mini')}<div class="sh-cmeta"><b>${statusLbl}</b><span class="cw">${zero ? '' : '墙' + t.wall_expected.toFixed(1)}</span>${wk}</div></div>`;
+      }).join('');
+
+      return `<div class="suit-hud"><div class="sh-top"><span class="sh-title">🔍 ${esc(cur.label)}子推理</span><div style="display:flex;align-items:center;gap:4px"><div class="sh-tabs">${tabs}</div><button class="sh-toggle" onclick="toggleSuitHud()">收起</button></div></div><div class="sh-pills">${pills}</div>${clues}<div class="sh-grid">${grid}</div></div>`;
+    }
+
+    function tenpaiDiscardMap() {
+      const out = { map: {}, best: null };
+      const v = view;
+      if (!v || v.finished || v.phase !== 'play' || v.seats?.[0]?.won) return out;
+      const info = v.report?.own_info;
+      const legalDisc = v.decision?.discard || [];
+      if (!info || info.mode !== 'discard' || !legalDisc.length) return out;
+      const list = (info.discard_v2_options && info.discard_v2_options.length) ? info.discard_v2_options : (info.candidates || []);
+      for (const c of list) {
+        if (c.shanten_after !== 0 || !c.waits || !c.waits.length) continue;
+        const code = fromLabel(c.tile);
+        if (!legalDisc.includes(code)) continue;
+        if (!out.map[code]) out.map[code] = c;
+        if (!out.best) out.best = c;
+      }
+      return out;
+    }
+
+    function tenpaiDockHtml(previewCode = null) {
+      const v = view;
+      if (!v || v.finished || v.phase !== 'play' || v.seats?.[0]?.won) return '';
+      const info = v.report?.own_info;
+      if (!info) return '';
+
+      let waits = null;
+      let headHtml = '';
+      if (info.mode === 'wait' && info.shanten === 0 && info.waits && info.waits.length) {
+        waits = info.waits;
+        const total = waits.reduce((s, w) => s + (Number(w.remaining) || 0), 0);
+        headHtml = total > 0 ? '听牌' : '死听';
+      } else if (info.mode === 'discard') {
+        const tp = tenpaiDiscardMap();
+        let chosen = null;
+        if (previewCode && tp.map[previewCode]) {
+          chosen = tp.map[previewCode];
+        } else if (selected.length === 1) {
+          const selCode = selected[0] === 'drawn' ? v.drawn : v.hand[selected[0]];
+          if (selCode && tp.map[selCode]) chosen = tp.map[selCode];
+        }
+        if (!chosen) chosen = tp.best;
+        if (chosen && chosen.waits && chosen.waits.length) {
+          waits = chosen.waits;
+          headHtml = `打 ${miniL(chosen.tile)} 听`;
+        }
+      }
+      if (!waits || !waits.length) return '';
+
+      const totalLive = waits.reduce((s, w) => s + (Number(w.remaining) || 0), 0);
+      const deadAll = totalLive === 0;
+      const itemsHtml = waits.map(w => {
+        const code = fromLabel(w.tile);
+        const rem = Number(w.remaining) || 0;
+        const remCls = rem >= 2 ? 'ok' : (rem === 1 ? 'low' : 'zero');
+        const remTxt = rem > 0 ? `剩 ${rem} 张` : '已绝';
+        const fan = Number(w.fan) || 0;
+        const fanCls = fan >= 2 ? 'hi' : (fan === 1 ? 'mid' : '');
+        const fanTxt = fan > 0 ? `${fan}番` : '平胡';
+        const hasInf = rem > 0 && w.wall_expected !== undefined;
+        const wLock = (Number(w.winner_expected) || 0) >= 0.25 ? ` <span class="wlock">扣≈${Number(w.winner_expected).toFixed(1)}</span>` : '';
+        const infHtml = hasInf ? `<span class="td-inf">墙≈${Number(w.wall_expected).toFixed(1)}${wLock}</span>` : '';
+        return `<div class="td-item ${rem === 0 ? 'dead' : ''}">${tileHtml(code, 'mini')}<div class="td-meta"><span class="td-rem ${remCls}">${remTxt}</span><span class="td-fan ${fanCls}">${fanTxt}</span>${infHtml}</div></div>`;
+      }).join('');
+      return `<div class="tenpai-dock ${deadAll ? 'dead' : ''}"><div class="td-head"><div class="td-title">${headHtml}</div><div class="td-sum">共 <b>${totalLive}</b> 张</div></div><div class="td-list">${itemsHtml}</div></div>`;
+    }
+
+    function updateTenpaiPreview(code) {
+      const wrap = document.getElementById('tenpaiDockWrap');
+      if (wrap) wrap.innerHTML = tenpaiDockHtml(code);
     }
 
     function sortedHand() {
@@ -1868,6 +2761,7 @@
       const vs = v.seats[0].void;
       const canDiscard = d && d.discard.length > 0;
       const canSwap = d && d.swap;
+      const tpMap = canDiscard ? tenpaiDiscardMap().map : {};
       const me = v.seats[0];
       let shownApart = me.won && me.win && me.win.how === '自摸' ? me.win.tile : null;
       const inHand = sortedHand().filter(({ c }) => {
@@ -1881,6 +2775,7 @@
         if (canSwap) k += ' can';
         if (selected.includes(i)) k += ' sel';
         if (vs && c.slice(-1) === vs && v.phase !== 'swap_three') k += ' void-suit';
+        if (canDiscard && tpMap[c]) k += ' tenpai-can';
         if (hoverTile && hoverTile === c) k += ' hint';
         return tileHtml(c, k, `data-i="${i}" data-c="${c}"`);
       });
@@ -1889,6 +2784,7 @@
         if (canDiscard) k += ' can';
         if (selected.includes('drawn')) k += ' sel';
         if (vs && v.drawn.slice(-1) === vs) k += ' void-suit';
+        if (canDiscard && tpMap[v.drawn]) k += ' tenpai-can';
         items.push('<span class="drawn-gap"></span>' + tileHtml(v.drawn, k, `data-i="drawn" data-c="${v.drawn}"`));
       }
       return items.join('');
@@ -1930,8 +2826,8 @@
       document.querySelectorAll('#hand .tile').forEach(el => {
         el.addEventListener('click', () => onTileClick(el.dataset.i, el.dataset.c));
         el.addEventListener('dblclick', () => { const d = view.decision; if (d && d.discard.includes(el.dataset.c)) discard(el.dataset.c); });
-        el.addEventListener('mouseenter', () => { highlightRows(el.dataset.c); });
-        el.addEventListener('mouseleave', () => { highlightRows(null); });
+        el.addEventListener('mouseenter', () => { highlightRows(el.dataset.c); updateTenpaiPreview(el.dataset.c); });
+        el.addEventListener('mouseleave', () => { highlightRows(null); updateTenpaiPreview(null); });
       });
     }
     function highlightRows(code) {
@@ -1982,17 +2878,62 @@
     }
     function toggleFast() { fastForward = !fastForward; renderTable(); run(); }
 
+    function showDiscardPop(e) {
+      if (!e.tile || fastForward) return;
+      document.querySelectorAll('.discard-pop').forEach(x => x.remove());
+      const stage = document.querySelector('.stage');
+      if (!stage) return;
+      const dur = Math.max(900, Math.min(2600, Math.round(delay * 0.90)));
+      const el = document.createElement('div');
+      el.className = `discard-pop s-${e.seat}`;
+      el.style.setProperty('--pop-dur', dur + 'ms');
+      const who = ['自己', '下家', '对家', '上家'][e.seat] || '';
+      const cnTile = e.tile.slice(0, -1) + (SUIT_CN[e.tile.slice(-1)] || '');
+      el.innerHTML = `<div class="who-lbl">${esc(who)} 打出 ${esc(cnTile)}</div>${tileHtml(e.tile)}`;
+      stage.appendChild(el);
+      setTimeout(() => el.remove(), dur + 50);
+    }
+    function showCallout(e) {
+      if (fastForward) return;
+      document.querySelectorAll('.callout').forEach(x => x.remove());
+      const stage = document.querySelector('.stage');
+      if (!stage) return;
+      const isPong = e.kind === 'pong';
+      const el = document.createElement('div');
+      el.className = `callout ${isPong ? 'pong' : 'kong'} s-${e.seat}`;
+      const who = ['自己', '下家', '对家', '上家'][e.seat] || '';
+      const word = isPong ? '碰!' : (e.text && e.text.includes('暗杠') ? '暗杠!' : (e.text && e.text.includes('补杠') ? '补杠!' : '杠!'));
+      const tilePart = e.tile ? tileHtml(e.tile) : '';
+      el.innerHTML = `<span class="word">${word}</span><div><div class="sub">${esc(who)}</div></div>${tilePart}`;
+      stage.appendChild(el);
+      setTimeout(() => el.remove(), 1400);
+    }
+
     function apply(r) {
       const prev = view;
       view = r.view;
       freshSeats = new Set();
-      for (const e of r.events || []) {
-        if (e.kind === 'discard') freshSeats.add(e.seat);
-        if (['win', 'self_win', 'rob_kong_win'].includes(e.kind)) burst(e);
+      if (!prev || prev.hand_no !== view.hand_no) {
+        selected = [];
+        fastForward = false;
+        lastDiscardSeat = null;
       }
-      if (!prev || prev.hand_no !== view.hand_no) { selected = []; fastForward = false; }
+      const evs = r.events || [];
+      for (const e of evs) {
+        if (e.kind === 'discard') {
+          freshSeats.add(e.seat);
+          lastDiscardSeat = e.seat;
+        } else if (e.kind === 'pong' || e.kind === 'kong') {
+          lastDiscardSeat = null;
+        }
+      }
       renderAll();
-      if (view.finished && (!prev || !prev.finished)) setTimeout(showResult, (r.events || []).some(e => e.kind.includes('win')) ? 1400 : 300);
+      for (const e of evs) {
+        if (e.kind === 'discard') showDiscardPop(e);
+        else if (e.kind === 'pong' || e.kind === 'kong') showCallout(e);
+        else if (['win', 'self_win', 'rob_kong_win'].includes(e.kind)) burst(e);
+      }
+      if (view.finished && (!prev || !prev.finished)) setTimeout(showResult, evs.some(e => e.kind.includes('win')) ? 1600 : 450);
     }
     function burst(e) {
       const el = document.createElement('div');
@@ -2003,15 +2944,54 @@
       setTimeout(() => el.remove(), 1600);
     }
 
-    async function run() {
-      if (busy) return;
+    function togglePause() {
+      paused = !paused;
+      const btn = document.getElementById('pauseBtn');
+      const stepBtn = document.getElementById('stepBtn');
+      if (btn) {
+        btn.classList.toggle('paused', paused);
+        btn.textContent = paused ? '▶ 继续' : '⏸ 暂停';
+      }
+      if (stepBtn) stepBtn.style.display = paused ? 'inline-block' : 'none';
+      if (!paused) run();
+    }
+
+    async function stepOnce() {
+      if (busy || !view || view.finished || view.decision) return;
       busy = true;
       try {
-        while (view && !view.finished && !view.decision) {
+        const r = await api('/api/advance', {});
+        apply(r);
+      } catch (e) { toast('出错了:' + e.message); }
+      busy = false;
+    }
+
+    function setDelay(ms) {
+      delay = Math.max(500, Math.min(4000, Math.round(Number(ms) / 100) * 100));
+      try { localStorage.setItem('mj.delay.v3', String(delay)); } catch (e) { }
+      const rng = document.getElementById('speedRange');
+      const lbl = document.getElementById('speedVal');
+      if (rng) rng.value = String(delay);
+      if (lbl) lbl.textContent = (delay / 1000).toFixed(1) + 's';
+      document.querySelectorAll('#speed button').forEach(x => x.classList.toggle('on', Number(x.dataset.v) === delay));
+    }
+
+    async function run() {
+      if (busy || paused) return;
+      busy = true;
+      try {
+        while (view && !view.finished && !view.decision && !paused) {
           const r = await api('/api/advance', {});
-          const visible = (r.events || []).length > 0;
+          const evs = r.events || [];
+          const visible = evs.length > 0;
           apply(r);
-          if (visible && !fastForward) await sleep(delay);
+          if (visible && !fastForward) {
+            let waitMs = delay;
+            if (evs.some(e => ['win', 'self_win', 'rob_kong_win'].includes(e.kind))) waitMs = Math.max(delay + 750, 1750);
+            else if (evs.some(e => e.kind === 'pong' || e.kind === 'kong')) waitMs = Math.max(delay + 450, 1450);
+            else if (evs.some(e => e.kind === 'swap_three' || e.kind === 'declare_void')) waitMs = Math.round(delay * 0.65);
+            await sleep(waitMs);
+          }
         }
       } catch (e) { toast('出错了:' + e.message); }
       busy = false;
@@ -2070,6 +3050,42 @@
       if (winAlert) {
         return `<div class="decision-hero"><div class="eyebrow">第一优先 · 胡牌</div><h3>${esc(winAlert.title)}</h3><div class="reason">${esc((winAlert.basis || []).join(' · ') || '满足胡牌条件')}</div></div>`;
       }
+
+      // 优先提取所有碰/杠参谋, 并按「推荐杠 > 推荐碰 > 弃牌 > 建议过」排序, 彻底避免“建议不碰”盖掉“建议明杠/暗杠”!
+      const DO_KONG = new Set(['建议明杠', '建议暗杠', '建议补杠']);
+      const DO_PONG = new Set(['强烈建议碰', '建议碰', '可碰']);
+      const SKIP_VERDICTS = new Set(['建议不碰', '不建议碰', '慎碰', '建议不杠', '慎杠', '建议不补杠', '慎补杠']);
+      const parseTact = f => {
+        const m = f.title.match(/^(碰|明杠|暗杠|补杠)([^\[]+)\[([^\]]+)\]:?(.*)$/);
+        return m ? { f, actType: m[1], tileLbl: m[2].trim(), verdict: m[3], detail: m[4] } : null;
+      };
+      const tactList = alerts.map(parseTact).filter(Boolean);
+      const bestKong = tactList.find(t => t.actType !== '碰' && DO_KONG.has(t.verdict));
+      const bestPong = tactList.find(t => t.actType === '碰' && DO_PONG.has(t.verdict));
+      const renderTactHero = t => {
+        const isDo = DO_KONG.has(t.verdict) || DO_PONG.has(t.verdict);
+        const isSkip = SKIP_VERDICTS.has(t.verdict);
+        const dm = t.detail.match(/碰后打([1-9][万条筒])/);
+        let headHtml = '';
+        if (isDo) {
+          headHtml = `<span style="color:#15803d">✔ 建议${esc(t.actType)}</span> ${miniL(t.tileLbl)}` +
+            (dm ? ` <span style="font-size:15px;color:#5a4a2e">→ 打</span> ${miniL(dm[1])}` : '');
+        } else if (isSkip) {
+          headHtml = `<span style="color:#b45309">✖ 建议过</span> <span style="font-size:14px;font-weight:600;color:#6e5a39">（${esc(t.verdict)} ${esc(t.tileLbl)}）</span>`;
+        } else {
+          headHtml = `<span style="color:#7c3aed">⚖ 权衡（偏过）</span> <span style="font-size:14px;font-weight:600;color:#6e5a39">${esc(t.actType)} ${esc(t.tileLbl)}</span>`;
+        }
+        const b0 = (t.f.basis || [])[0] || '';
+        const b1 = (t.f.basis || [])[1] || '';
+        const b2 = (t.f.basis || [])[2] || '';
+        return `<div class="decision-hero"><div class="eyebrow">第一优先 · 碰/杠参谋</div><h3>${headHtml}</h3><div class="reason">${esc(b0)}</div><div class="quick-actions"><div class="quick-action" style="text-align:left;padding:6px 8px"><b>${esc(b1 || t.detail)}</b></div>${b2 ? `<div class="quick-action secondary" style="text-align:left;padding:6px 8px"><b>${esc(b2)}</b></div>` : ''}</div></div>`;
+      };
+
+      // 1) 有推荐执行的杠(明杠/暗杠/补杠)时, 最高优先展示(优先于碰与弃牌)
+      if (bestKong) return renderTactHero(bestKong);
+      // 2) 响应别家弃牌且有推荐执行的碰时, 优先展示碰
+      if (bestPong) return renderTactHero(bestPong);
+
       const info = rep.own_info;
       const evList = info?.mode === 'discard' ? (info.discard_v2_options?.length ? info.discard_v2_options : info.candidates) : null;
       const top = evList ? evList[0] : null;
@@ -2082,9 +3098,8 @@
         const riskTxt = top.safe_all ? '100%安全' : (top.dealin_prob !== undefined ? `${(top.dealin_prob * 100).toFixed(1)}%` : '—');
         return `<div class="decision-hero"><div class="eyebrow">第一优先 · 综合出牌 (discard_v2)</div><h3>建议打出 ${miniL(top.tile)}</h3><div class="reason">${esc(reasonTxt)}</div><div class="quick-actions"><div class="quick-action"><b>${top.shanten_after}</b>向听</div><div class="quick-action"><b>${top.live}</b>张有效牌</div><div class="quick-action"><b>${riskTxt}</b>点炮风险</div>${alternatives.map(a => `<div class="quick-action secondary"><b>${miniL(a.tile)}</b>备选</div>`).join('')}</div></div>`;
       }
-      const tactAlert = alerts.find(f => f.title.startsWith('碰') || f.title.startsWith('明杠') || f.title.startsWith('暗杠') || f.title.startsWith('补杠'));
-      if (tactAlert) {
-        return `<div class="decision-hero"><div class="eyebrow">第一优先 · 碰/杠参谋</div><h3>${esc(tactAlert.title)}</h3><div class="reason">${esc((tactAlert.basis || []).slice(0, 2).join(' · '))}</div></div>`;
+      if (tactList.length) {
+        return renderTactHero(tactList[0]);
       }
       return `<div class="decision-hero"><div class="eyebrow">当前决策</div><h3>请查看下方提示</h3><div class="reason">先处理确定性提醒，再展开详细分析。</div></div>`;
     }
@@ -2147,6 +3162,9 @@
       const items = rep.winners || [];
       if (!items.length) return '';
       const cards = items.map(w => {
+        const sureBanner = (w.certain_tiles && w.certain_tiles.length)
+          ? `<div style="margin:4px 0;color:#0369a1;font-weight:700;font-size:12px">100% 必有: ${w.certain_tiles.map(c => `${miniL(c.tile)}${c.count > 1 ? '×' + c.count : ''}`).join(' ')}</div>`
+          : '';
         let extra = '';
         if (w.status === 'complete') {
           extra = `<div>可能组合 <b>${w.candidate_count}</b> 种${w.joint ? '(已与另一名胡牌者联合约束)' : ''}</div>
@@ -2155,7 +3173,7 @@
         } else if (w.status === 'too_many') extra = '<div class="muted">可能组合太多,暂不展开(余牌少了会自动展开)</div>';
         else if (w.status === 'no_candidate') extra = '<div class="err">找不到能胡的组合,牌面信息可能有误</div>';
         else extra = '<div class="muted">胡牌张未亮出,无法反推</div>';
-        return `<div class="winner-card"><b>${esc(w.name)}</b> ${esc(w.how)} ${w.tile ? miniL(w.tile) : ''} · 扣着 ${w.hidden_count} 张${extra}</div>`;
+        return `<div class="winner-card"><b>${esc(w.name)}</b> ${esc(w.how)} ${w.tile ? miniL(w.tile) : ''} · 扣着 ${w.hidden_count} 张${sureBanner}${extra}</div>`;
       }).join('');
       return card('④', '已胡者手牌反推', cards + findingsBlock(rep.sections.winners, '全部结论'));
     }
@@ -2167,13 +3185,16 @@
         for (let r = 0; r < 9; r++) {
           const row = rows[si * 9 + r];
           const code = `${r + 1}${s}`;
-          const gone = row.unseen === 0;
-          const tip = `${r + 1}${SUIT_CN[s]} · 已现:${row.seen_from || '无'}`;
-          g += `<div class="rem-cell ${gone ? 'zero' : row.unseen === 1 ? 'last' : ''}">${tileHtml(code, 'mini', `title="${esc(tip)}"`)}<b>${gone ? '绝' : row.unseen}</b><span>${gone ? '' : '≈' + Number(row.wall_expected).toFixed(1)}</span></div>`;
+          const eff = row.effective_unseen !== undefined ? row.effective_unseen : row.unseen;
+          const locked = Number(row.certain_locked) || 0;
+          const gone = eff === 0;
+          const lbl = row.unseen === 0 ? '绝' : (eff === 0 ? '锁绝' : String(eff));
+          const tip = `${r + 1}${SUIT_CN[s]} · 已现:${row.seen_from || '无'}${locked ? ` · 已胡100%锁死 ${locked} 张` : ''}`;
+          g += `<div class="rem-cell ${gone ? 'zero' : eff === 1 ? 'last' : ''}">${tileHtml(code, 'mini', `title="${esc(tip)}"`)}<b>${lbl}</b><span>${gone ? (locked ? '必扣' + locked : '') : '≈' + Number(row.wall_expected).toFixed(1)}</span></div>`;
         }
       });
       g += '</div>';
-      return card('⑤', '余牌', g + `<div style="margin-top:6px">${findingsBlock(rep.sections.remaining || [], '相关结论')}</div>`, '大字=还没出现 · ≈=估计在牌墙里', true);
+      return card('⑤', '余牌', g + `<div style="margin-top:6px">${findingsBlock(rep.sections.remaining || [], '相关结论')}</div>`, '大字=实际剩余(已扣已胡必有) · ≈=估计在牌墙', true);
     }
     function renderOpening(rep) {
       const info = rep.opening_info;
@@ -2226,13 +3247,14 @@
         const hand = (s.hand || []).slice().sort((a, b) => SUIT_ORDER[a.slice(-1)] * 10 + +a.slice(0, -1) - SUIT_ORDER[b.slice(-1)] * 10 - +b.slice(0, -1));
         const melds = s.melds.map(m => `<span class="sep"></span>${tileHtml(m.tile, 'mini').repeat(m.kind === 'kong' ? 4 : 3)}`).join('');
         const win = s.win ? `<span class="sep"></span>${s.win.tile ? tileHtml(s.win.tile, 'mini won-tile') : ''}<span style="margin-left:6px;color:#ff8a70">${esc(s.win.how)}</span>` : '';
-        return `<div class="res-row"><div class="nm">${esc(s.name)}${v.dealer === i ? ' <span class="badge-dealer">庄</span>' : ''}<small>${s.void ? '缺' + SUIT_CN[s.void] : ''}</small></div>
+        const aiTag = s.ai_tag ? `<small style="color:#ffd36a;margin-left:4px">[${esc(s.ai_tag)}]</small>` : '';
+        return `<div class="res-row"><div class="nm">${esc(s.name)}${v.dealer === i ? ' <span class="badge-dealer">庄</span>' : ''}${aiTag}<small>${s.void ? '缺' + SUIT_CN[s.void] : ''}</small></div>
       <div class="res-tiles">${hand.map(c => tileHtml(c, 'mini')).join('')}${melds}${win}</div>
       <div class="delta ${cls(s.score)}">${signed(s.score)}</div><div class="tot">累计 <b class="${cls(s.total)}">${signed(s.total)}</b></div></div>`;
       }).join('');
       const anyWin = v.seats.some(s => s.won);
       document.getElementById('layer').innerHTML = `<div class="overlay"><div class="modal"><h3>${anyWin ? '本局结算' : '流局'}</h3>${rows}
-    <div class="foot"><button class="btn-act pass" onclick="closeLayer()">看牌桌</button><button class="btn-act" onclick="nextHand()">下一局</button></div></div></div>`;
+    <div class="foot"><button class="btn-act pass" onclick="closeLayer()">看牌桌</button><button class="btn-act pass" style="border-color:#ff7b5c;color:#ffb4a2" onclick="openMark()">🚩 反馈本局</button><button class="btn-act" onclick="nextHand()">下一局</button></div></div></div>`;
     }
     function closeLayer() {
       document.getElementById('layer').innerHTML = view.finished ? `<div style="position:fixed;right:450px;bottom:30px;z-index:40"><button class="btn-act" onclick="showResult()">结算</button> <button class="btn-act" onclick="nextHand()">下一局</button></div>` : '';
@@ -2243,17 +3265,40 @@
       run();
     }
 
-    // ---------- 标记 ----------
+    // ---------- 实时反馈与标记 ----------
+    const MARK_TAGS = ['弃牌不对', '换三张不对', '定缺不对', '碰/杠建议不对', '读牌/点炮估错', '残局弃胡/冲听', '这手很赞'];
+    let selectedMarkTag = '弃牌不对';
+    function pickMarkTag(btn, tag) {
+      selectedMarkTag = tag;
+      document.querySelectorAll('.mtag').forEach(el => {
+        el.style.background = el === btn ? '#e8c46a' : '#1b2230';
+        el.style.color = el === btn ? '#2a1d05' : '#cbd5e1';
+        el.style.fontWeight = el === btn ? '700' : '400';
+      });
+    }
     function openMark() {
-      document.getElementById('layer').innerHTML = `<div class="overlay"><div class="modal mark-box" style="width:min(560px,92vw)"><h3 style="font-size:24px">标记这一刻</h3>
-    <div class="muted" style="margin-bottom:8px;font-size:13px">当前牌面、辅助器输出和你写的话会一起保存,之后可以原样复现这个局面。</div>
-    <textarea id="markNote" placeholder="例如:这里应该提醒我上家可能在等 3条"></textarea>
-    <div class="foot"><button class="btn-act pass" onclick="document.getElementById('layer').innerHTML=''">取消</button><button class="btn-act" onclick="saveMark()">保存</button></div></div></div>`;
-      setTimeout(() => document.getElementById('markNote').focus(), 50);
+      const phaseTag = (view && view.phase === 'swap_three') ? '换三张不对'
+        : (view && view.phase === 'declare_void') ? '定缺不对' : '弃牌不对';
+      selectedMarkTag = phaseTag;
+      const tagsHtml = MARK_TAGS.map(t => {
+        const on = t === selectedMarkTag;
+        return `<button type="button" class="mtag" onclick="pickMarkTag(this,'${t}')" style="border:1px solid #3a4054;border-radius:14px;padding:4px 10px;margin:0 6px 6px 0;cursor:pointer;font-size:12px;background:${on ? '#e8c46a' : '#1b2230'};color:${on ? '#2a1d05' : '#cbd5e1'};font-weight:${on ? '700' : '400'}">${t}</button>`;
+      }).join('');
+      document.getElementById('layer').innerHTML = `<div class="overlay"><div class="modal mark-box" style="width:min(580px,94vw)"><h3 style="font-size:22px;margin-bottom:6px">🚩 给辅助器提实时反馈</h3>
+    <div class="muted" style="margin-bottom:10px;font-size:12px">会自动保存当前完整牌面、辅助器 EV 推荐、以及后台复盘用的三家暗牌线索（保存在 feedback_inbox.jsonl），随时喊我就能按你的线索升级辅助器。</div>
+    <div style="margin-bottom:8px">${tagsHtml}</div>
+    <input id="markExpected" type="text" placeholder="我认为更好的选择（选填，例如：打5筒 / 不碰9条 / 换123万）" style="width:100%;padding:8px 10px;margin-bottom:8px;border-radius:8px;border:1px solid #3a4054;background:#0f1218;color:#f5efe0;font-size:13px" />
+    <textarea id="markNote" placeholder="你的牌理思路或吐槽（选填，例如：下家明显清一色条，这里不该拆两面 / 应该保清一色）"></textarea>
+    <div class="foot"><button class="btn-act pass" onclick="document.getElementById('layer').innerHTML='';if(view&&view.finished)closeLayer()">取消</button><button class="btn-act" onclick="saveMark()">保存反馈</button></div></div></div>`;
+      setTimeout(() => document.getElementById('markExpected').focus(), 50);
     }
     async function saveMark() {
       const note = document.getElementById('markNote').value;
-      try { const r = await api('/api/mark', { note }); toast(`已保存,共 ${r.count} 条标记`); } catch (e) { toast('保存失败:' + e.message); }
+      const expected_action = document.getElementById('markExpected').value;
+      try {
+        const r = await api('/api/mark', { tag: selectedMarkTag, expected_action, note });
+        toast(`反馈已存入收件箱（累计 ${r.inbox_count || r.count} 条），随时喊我复盘升级`);
+      } catch (e) { toast('保存失败:' + e.message); }
       document.getElementById('layer').innerHTML = '';
       if (view.finished) closeLayer();
     }
@@ -2262,14 +3307,13 @@
 
     // ---------- 启动 ----------
     document.getElementById('markBtn').addEventListener('click', openMark);
+    document.getElementById('pauseBtn').addEventListener('click', togglePause);
+    document.getElementById('stepBtn').addEventListener('click', stepOnce);
+    document.getElementById('speedRange').addEventListener('input', e => setDelay(e.target.value));
     document.querySelectorAll('#speed button').forEach(b => {
-      b.classList.toggle('on', Number(b.dataset.v) === delay);
-      b.addEventListener('click', () => {
-        delay = Number(b.dataset.v);
-        try { localStorage.setItem('mj.delay', String(delay)); } catch (e) { }
-        document.querySelectorAll('#speed button').forEach(x => x.classList.toggle('on', x === b));
-      });
+      b.addEventListener('click', () => setDelay(b.dataset.v));
     });
+    setDelay(delay);
     (async () => {
       try { apply(await api('/api/state')); run(); }
       catch (e) { document.getElementById('aside').innerHTML = `<div class="err">连接服务失败:${esc(e.message)}</div>`; }
